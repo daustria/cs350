@@ -520,6 +520,18 @@ cmd_mainmenu(int n, char **a)
 	return 0;
 }
 
+
+// Option for assignment 0
+static
+int
+cmd_dth(int n, char **a)
+{
+	(void)n;
+	(void)a;
+	dbflags |= DB_THREADS;
+	return 0;
+}
+
 ////////////////////////////////////////
 //
 // Command table.
@@ -590,7 +602,7 @@ static struct {
 	{ "fs4",	writestress2 },
 	{ "fs5",	createstress },
 
-	{ NULL, NULL }
+	{ "dth", 	cmd_dth }
 };
 
 /*
