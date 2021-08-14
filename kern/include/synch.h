@@ -36,6 +36,7 @@
 
 
 #include <spinlock.h>
+#include <thread.h>
 
 /*
  * Dijkstra-style semaphore.
@@ -62,7 +63,6 @@ void sem_destroy(struct semaphore *);
 void P(struct semaphore *);
 void V(struct semaphore *);
 
-
 /*
  * Simple lock for mutual exclusion.
  *
@@ -73,9 +73,34 @@ void V(struct semaphore *);
  * (should be) made internally.
  */
 struct lock {
+
         char *lk_name;
+
         // add what you need here
         // (don't forget to mark things volatile as needed)
+	volatile bool held;
+
+	//Question: does the wc represent all sleeping threads?
+	//we saw earlier that it may not be ideal to have a waiting channel
+	//contain all sleeping threads.
+	//
+	// we may want different waiting channels, organized by the resource for which
+	// the threads are waiting.
+	struct wchan *wc;
+
+	struct thread *owner;
+
+	//spinlocks should not be used too much, they waste cpu time.
+	//they will just be used for a little time here.
+	//
+	//in OS161, a CPU owns a spinlock in the sense that when a thread acquires
+	//a spinlock, the active CPU disables interrupts so that it runs only the
+	//thread that has the spinlock. 
+	//
+	//if the machine has multiple processors, and another CPU tries to get
+	//the spinlock, then it will spin.
+	struct spinlock spin;
+	
 };
 
 struct lock *lock_create(const char *name);
