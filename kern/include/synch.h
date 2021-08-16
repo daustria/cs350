@@ -140,6 +140,10 @@ struct cv {
         char *cv_name;
         // add what you need here
         // (don't forget to mark things volatile as needed)
+	struct wchan *wc; //and that's it
+
+	//the CV does not actually own the lock, you can use different locks for it.
+
 };
 
 struct cv *cv_create(const char *name);

@@ -187,7 +187,7 @@ lock_create(const char *name)
 	//question: why do we have held and owner? we really
 	//could just have owner
 	lock->held = false; //at first, nobody owns the lock
-	lock->owner = curthread;
+	lock->owner = NULL;
 
         return lock;
 }
@@ -261,7 +261,9 @@ lock_release(struct lock *lock)
 bool
 lock_do_i_hold(struct lock *lock)
 {
-	return lock->held;
+	KASSERT(lock != NULL);
+
+	return lock->owner == curthread;
 }
 
 ////////////////////////////////////////////////////////////
@@ -287,6 +289,17 @@ cv_create(const char *name)
         
         // add stuff here as needed
         
+	//initialize the wait channel first, because like malloc and kstrdup,
+	//if it fails we bail out	
+	cv->wc = wchan_create(cv->cv_name);
+
+	if (cv->wc == NULL) 
+	{
+		kfree(cv->cv_name);
+		kfree(cv);
+		return NULL;
+	}
+
         return cv;
 }
 
@@ -297,6 +310,7 @@ cv_destroy(struct cv *cv)
 
         // add stuff here as needed
         
+	wchan_destroy(cv->wc);
         kfree(cv->cv_name);
         kfree(cv);
 }
@@ -304,23 +318,52 @@ cv_destroy(struct cv *cv)
 void
 cv_wait(struct cv *cv, struct lock *lock)
 {
-        // Write this
-        (void)cv;    // suppress warning until code gets written
-        (void)lock;  // suppress warning until code gets written
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
+	KASSERT(lock_do_i_hold(lock)); //we have to own the lock before we wait. since 
+	//we are going to release it.
+	
+
+	//yes, technically, lock_release() asserts the same condition. but there are many arguments
+	//for why asserting twice, once in this cv function and the other in the lock implementation,
+	//is better than being minimalistic. for one, debugging and readability is improved
+	
+
+	//we must go to sleep and release the lock, atomically as possible 
+	
+	//lock the wait channel. we don't want other threads picking up the lock
+	//before we release it.
+	wchan_lock(cv->wc);
+
+	//release the lock before we go to sleep. this is so other threads can wake us up,
+	//when there is a change of state, and the condition we are waiting on that
+	//was false before might now be true
+	lock_release(lock);
+
+	wchan_sleep(cv->wc);
+
+	lock_acquire(lock);
 }
 
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
-        // Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
+
+	//we don't need to own the lock when calling signal. why?
+	wchan_wakeone(cv->wc);
+
+	(void) lock; //dont need the lock. just call wakeone..
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
-	// Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
+
+	wchan_wakeall(cv->wc);
+
+	(void) lock;
 }
