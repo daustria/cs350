@@ -30,6 +30,9 @@
 #ifndef _SYSCALL_H_
 #define _SYSCALL_H_
 
+#include <synch.h> // for lock, for the PID assignment counter.
+#include "opt-A2.h"
+
 
 struct trapframe; /* from <machine/trapframe.h> */
 
@@ -43,13 +46,28 @@ void syscall(struct trapframe *tf);
  * Support functions.
  */
 
+#ifdef OPT_A2
+/* 
+ * When making a new thread calling thread_fork(), we want to use enter_forked_process()
+ * as the entry function for the new thread.
+ *
+ * To do this, we need to change the signature of enter_forked_process(). 
+ * thread_fork() expects that the signature of the entry function:
+ *
+ * 1. Returns void
+ * 2. Takes (void *, unsigned long) as its parameters.
+ *
+ * Pass the trapframe as a void * instead.
+ */
+void enter_forked_process(void *tf_p, unsigned long k);
+#else
 /* Helper for fork(). You write this. */
 void enter_forked_process(struct trapframe *tf);
+#endif /* OPT_A2 */
 
 /* Enter user mode. Does not return. */
 void enter_new_process(int argc, userptr_t argv, vaddr_t stackptr,
 		       vaddr_t entrypoint);
-
 
 /*
  * Prototypes for IN-KERNEL entry points for system call implementations.
@@ -57,6 +75,30 @@ void enter_new_process(int argc, userptr_t argv, vaddr_t stackptr,
 
 int sys_reboot(int code);
 int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
+
+#ifdef OPT_A2
+
+/*
+ *
+ * Q : For the purposes of OS161, a global PID counter will suffice for assigning
+ * PID's to new processes.
+ *
+ * However how do we make sure the assignment is threadsafe? Use locks. But exactly how will
+ *  the OS use these locks? Eg. Where will they be initialized, acquired and released? What function?
+ * 
+ *
+ * Initializing seems to be the problem I have trouble to figure out.
+ * answer: initialize in proc_bootstrap() in proc.h
+ *
+ */
+volatile pid_t pid_counter;
+
+//for providing mutual exclusion when updating the counter
+
+struct spinlock pid_counter_mutex;
+
+int sys_fork(struct trapframe *tf);
+#endif /* OPT_A2 */
 
 #ifdef UW
 int sys_write(int fdesc,userptr_t ubuf,unsigned int nbytes,int *retval);

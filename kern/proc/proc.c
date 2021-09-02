@@ -50,6 +50,13 @@
 #include <vfs.h>
 #include <synch.h>
 #include <kern/fcntl.h>  
+#include <syscall.h>
+#include "opt-A2.h"
+
+#ifdef OPT_A2
+extern volatile pid_t pid_counter;
+extern struct spinlock *pid_counter_mutex_p;
+#endif // OPT_A2
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -68,8 +75,6 @@ static struct semaphore *proc_count_mutex;
 /* used to signal the kernel menu thread when there are no processes */
 struct semaphore *no_proc_sem;   
 #endif  // UW
-
-
 
 /*
  * Create a proc structure.
@@ -208,6 +213,28 @@ proc_bootstrap(void)
     panic("could not create no_proc_sem semaphore\n");
   }
 #endif // UW 
+
+#ifdef OPT_A2
+
+ /////////////////////////////////////////////////////////////////
+ //sys_fork()
+ /////////////////////////////////////////////////////////////////
+ //
+ // Initialize the counter for PID assignment here.
+
+ // Question: where do we call spinlock_cleanup()? 
+ // Do we need to care about freeing it if it is supposed to stay
+ // alive as long as the OS does?
+
+ pid_counter = 0; 
+
+ spinlock_init(&pid_counter_mutex); //just assume it will always work
+
+ pid_counter += 0; //silence the warning of unused variable.
+
+#endif // OPT_A2
+
+
 }
 
 /*

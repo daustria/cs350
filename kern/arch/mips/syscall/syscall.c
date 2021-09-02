@@ -35,6 +35,7 @@
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
+#include "opt-A2.h"
 
 
 /*
@@ -133,6 +134,12 @@ syscall(struct trapframe *tf)
 
 	    /* Add stuff here */
  
+#ifdef OPT_A2
+	case SYS_fork:
+	  err = sys_fork(tf); //Just throw the entire trapframe. Since it needs to be copied to the child
+	  break;
+
+#endif /* OPT_A2 */
 	default:
 	  kprintf("Unknown syscall %d\n", callno);
 	  err = ENOSYS;
@@ -177,7 +184,22 @@ syscall(struct trapframe *tf)
  * Thus, you can trash it and do things another way if you prefer.
  */
 void
-enter_forked_process(struct trapframe *tf)
+enter_forked_process(void *tf_p, unsigned long k)
 {
-	(void)tf;
+	// we have to make a copy of the trapframe.
+	//
+	// We could just give both the parent and child the same
+	// trapframe pointer... But this introduces problems in
+	// synchronization. Let's just use a simple approach of copying.
+	
+	struct trapframe tf_c = *(struct trapframe *) tf_p;
+
+	//Change some registers, to alter the return value.
+	
+	tf_c.tf_a3 = 0; 	//Means the call was successful. 
+	tf_c.tf_v0 = 0; 	//Return value from the child.
+	tf_c.tf_epc += 4; 	//Update the program counter
+
+	mips_usermode(&tf_c); //Enter user mode. A call here should not return I think...
+	(void) k;
 }
