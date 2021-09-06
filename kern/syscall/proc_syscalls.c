@@ -164,7 +164,6 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 		return ENOMEM;
 
 	} else {
-
 		
 		struct addrspace *current_as = curproc_getas();
 
@@ -197,7 +196,8 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 		struct trapframe *tf_copy = kmalloc(sizeof(*tf)); //Remember to free this later
 
 		//Question: When I debug, why isn't this line being used?
-		rc = thread_fork(curthread->t_name, child, enter_forked_process, tf_copy, 0);
+		//Put in the child_pid for debugging
+		rc = thread_fork(curthread->t_name, child, enter_forked_process, tf_copy, (unsigned long) child_pid);
 
 		if(rc != 0)
 		{
@@ -210,7 +210,6 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 		//syscall will handle the trapframe registers
 		*retval = child_pid;
 		return 0;
-
 
 	}
 

@@ -184,8 +184,11 @@ syscall(struct trapframe *tf)
  * Thus, you can trash it and do things another way if you prefer.
  */
 void
-enter_forked_process(void *tf_p, unsigned long k)
+enter_forked_process(void *tf_p, unsigned long child_pid)
 {
+	DEBUG(DB_THREADS, "Current thread name: %s\n", curthread->t_name);
+	DEBUG(DB_THREADS, "Making new thread with PID: %lx\n", child_pid);
+
 	// we have to make a copy of the trapframe.
 	//
 	// We could just give both the parent and child the same
@@ -208,5 +211,4 @@ enter_forked_process(void *tf_p, unsigned long k)
 	kfree(tf_p);
 
 	mips_usermode(&tf_c); //Enter user mode. A call here should not return I think...
-	(void) k; //suppress warnings
 }
