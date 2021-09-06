@@ -97,7 +97,7 @@ volatile pid_t pid_counter;
 
 struct spinlock pid_counter_mutex;
 
-int sys_fork(struct trapframe *tf);
+int sys_fork(struct trapframe *tf, pid_t *retval);
 #endif /* OPT_A2 */
 
 #ifdef UW

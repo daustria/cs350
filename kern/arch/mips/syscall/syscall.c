@@ -136,7 +136,7 @@ syscall(struct trapframe *tf)
  
 #ifdef OPT_A2
 	case SYS_fork:
-	  err = sys_fork(tf); //Just throw the entire trapframe. Since it needs to be copied to the child
+	  err = sys_fork(tf, (pid_t *) &retval); //Just throw the entire trapframe. Since it needs to be copied to the child
 	  break;
 
 #endif /* OPT_A2 */
@@ -192,7 +192,10 @@ enter_forked_process(void *tf_p, unsigned long k)
 	// trapframe pointer... But this introduces problems in
 	// synchronization. Let's just use a simple approach of copying.
 	
-	struct trapframe tf_c = *(struct trapframe *) tf_p;
+	struct trapframe tf_c = *(struct trapframe *) tf_p; 
+
+	//this allocates the trapfrome to the child's kernel stack.
+	//The kernel stack is a stack for kernel use. Put 'special', 'privileged' stack frames like the one for enter_forked_process().
 
 	//Change some registers, to alter the return value.
 	
@@ -200,6 +203,10 @@ enter_forked_process(void *tf_p, unsigned long k)
 	tf_c.tf_v0 = 0; 	//Return value from the child.
 	tf_c.tf_epc += 4; 	//Update the program counter
 
+	//The tf_p is actually a copy of the parent's trapframe, allocated in the OS heap.
+	//Since we are done using it now, let's delete it.
+	kfree(tf_p);
+
 	mips_usermode(&tf_c); //Enter user mode. A call here should not return I think...
-	(void) k;
+	(void) k; //suppress warnings
 }

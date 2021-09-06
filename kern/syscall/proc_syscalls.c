@@ -148,11 +148,9 @@ sys_waitpid(pid_t pid,
 volatile pid_t pid_counter;
 struct spinlock *pid_counter_mutex_p;
 
-int sys_fork(struct trapframe *tf)
+int sys_fork(struct trapframe *tf, pid_t *retval)
 {
 	struct proc *p = curproc;
-
-	//pid_t parent_pid = p->p_pid; //save the parent PID for the return values later
 
 	//what is the name? it should be identical. so lets just make the names identical.
 	//maybe something like parentName + "-child" would be better, but whatever.
@@ -162,72 +160,57 @@ int sys_fork(struct trapframe *tf)
 
 
 	if(child == NULL) {
-		// let the user program know that the call failed.
-		// dont panic.
-
-		/*
-		tf->tf_a3 = 1; //Failure code.
-		tf->tf_v0 = ENOMEM; //Error code. No memory to make new process.
-		*/
-
+		
 		return ENOMEM;
 
 	} else {
 
-		// the child was successfully created.
-		//
-		// we now need to make a thread for the child, and make it an 
-		// exact clone of its parent process excepting the return code
-		// from sys_fork(), which, instead of 0, should be the PID of its parent.
-		//
-		// use as_copy() to give it a copy of the parent address space.
 		
 		struct addrspace *current_as = curproc_getas();
 
-		int rc = as_copy(current_as, &child->p_addrspace);
+		struct addrspace *new_as;
+
+		int rc = as_copy(current_as, &new_as);
 
 		if(rc != 0)
 		{
-			/*
-			//Set up trap frame 
-			tf->tf_a3 = 1;
-			tf->tf_v0 = EADDRNOTAVAIL;
-			*/
-
 			//Kill the child process (which has no threads).
 			proc_destroy(child);
 
 			return EADDRNOTAVAIL;
 		}
 
+		//now associate the child's address space with the new
+		
+		child->p_addrspace = new_as;
 
-		////////////////////////////////////////////////////////////////////
-		// PID ASSIGNMENT
-
-		//we need to assign the child a new PID.
+		// we need to assign the child a new PID.
 		// (In real life, we do need reusable PIDs).		
 		
 		spinlock_acquire(&pid_counter_mutex);
-		pid_t child_pid = pid_counter;
 		++pid_counter;
+		pid_t child_pid = pid_counter;
 		spinlock_release(&pid_counter_mutex);
 
-		tf->tf_a3 = 0; //success code
-		tf->tf_v0 = child_pid; //return value from fork
+		child->p_pid = child_pid;
 
-		/*
-		 * Next step: Create a new thread for the child process.
-		 * We'll use thread_fork().
-		 * 
-		 * To do this, we'll use enter_forked_process() helper function.
-		 * 
-		 * enter_forked_process will take 0 as its second parameter for now, I'm not
-		 * sure what it should be. maybe we'll know when we get around to writing it.	
-		 */
-	
-		thread_fork(curthread->t_name, child, enter_forked_process, tf, 0);
+		struct trapframe *tf_copy = kmalloc(sizeof(*tf)); //Remember to free this later
 
+		//Question: When I debug, why isn't this line being used?
+		rc = thread_fork(curthread->t_name, child, enter_forked_process, tf_copy, 0);
+
+		if(rc != 0)
+		{
+			kfree(tf_copy);
+			proc_destroy(child);
+			return rc;
+		}
+		
+		//set retval to child_pid and return 0.
+		//syscall will handle the trapframe registers
+		*retval = child_pid;
 		return 0;
+
 
 	}
 
