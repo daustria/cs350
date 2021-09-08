@@ -193,11 +193,18 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 
 		child->p_pid = child_pid;
 
-		struct trapframe *tf_copy = kmalloc(sizeof(*tf)); //Remember to free this later
+		struct trapframe *tf_copy = kmalloc(sizeof(struct trapframe)); //Remember to free this later
 
-		//Question: When I debug, why isn't this line being used?
+		if(tf_copy == NULL)
+		{
+			proc_destroy(child);
+			return ENOMEM;
+		}
+
+		*tf_copy = *tf;
+
 		//Put in the child_pid for debugging
-		rc = thread_fork(curthread->t_name, child, enter_forked_process, tf_copy, (unsigned long) child_pid);
+		rc = thread_fork(curthread->t_name, child, enter_forked_process, (void *) tf_copy, (unsigned long) child_pid);
 
 		if(rc != 0)
 		{

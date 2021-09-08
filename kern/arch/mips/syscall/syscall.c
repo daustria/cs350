@@ -195,7 +195,12 @@ enter_forked_process(void *tf_p, unsigned long child_pid)
 	// trapframe pointer... But this introduces problems in
 	// synchronization. Let's just use a simple approach of copying.
 	
-	struct trapframe tf_c = *(struct trapframe *) tf_p; 
+
+	struct proc *p = curproc;
+
+	(void) p; //suppress
+
+	struct trapframe tf_c = * (struct trapframe *) tf_p; 
 
 	//this allocates the trapfrome to the child's kernel stack.
 	//The kernel stack is a stack for kernel use. Put 'special', 'privileged' stack frames like the one for enter_forked_process().
@@ -208,7 +213,8 @@ enter_forked_process(void *tf_p, unsigned long child_pid)
 
 	//The tf_p is actually a copy of the parent's trapframe, allocated in the OS heap.
 	//Since we are done using it now, let's delete it.
-	kfree(tf_p);
+	struct trapframe *tmp = (struct trapframe *) tf_p;
+	kfree(tmp); //why cant i free this ??
 
 	mips_usermode(&tf_c); //Enter user mode. A call here should not return I think...
 }

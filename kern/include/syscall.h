@@ -47,18 +47,6 @@ void syscall(struct trapframe *tf);
  */
 
 #ifdef OPT_A2
-/* 
- * When making a new thread calling thread_fork(), we want to use enter_forked_process()
- * as the entry function for the new thread.
- *
- * To do this, we need to change the signature of enter_forked_process(). 
- * thread_fork() expects that the signature of the entry function:
- *
- * 1. Returns void
- * 2. Takes (void *, unsigned long) as its parameters.
- *
- * Pass the trapframe as a void * instead.
- */
 void enter_forked_process(void *tf_p, unsigned long k);
 #else
 /* Helper for fork(). You write this. */
