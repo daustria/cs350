@@ -13,131 +13,201 @@
 #include "opt-A2.h"
 
 #ifdef OPT_A2
+//Mutual exclusion for pid assignment in sys_fork()
 extern volatile pid_t pid_counter;
 extern struct spinlock pid_counter_mutex;
 #endif //OPT_A2
 
-  /* this implementation of sys__exit does not do anything with the exit code */
-  /* this needs to be fixed to get exit() and waitpid() working properly */
+#ifdef OPT_A2
 
+void sys__exit(int exitcode)
+{
+	struct addrspace *as;
+	struct proc *p = curproc;
+
+	/* for now, just include this to keep the compiler from complaining about
+	   an unused variable */
+
+	(void)exitcode;
+
+	DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
+
+	KASSERT(curproc->p_addrspace != NULL);
+	as_deactivate();
+	/*
+	 * clear p_addrspace before calling as_destroy. Otherwise if
+	 * as_destroy sleeps (which is quite possible) when we
+	 * come back we'll be calling as_activate on a
+	 * half-destroyed address space. This tends to be
+	 * messily fatal.
+	 */
+	as = curproc_setas(NULL);
+	as_destroy(as);
+
+	/* detach this thread from its process */
+	/* note: curproc cannot be used after this call */
+
+	//Question: Do we know that the process has only a single thread left, 
+	//indicated by curthread?
+	proc_remthread(curthread);
+
+	/* if this is the last user process in the system, proc_destroy()
+	   will wake up the kernel menu thread */
+	proc_destroy(p);
+
+	thread_exit();
+	/* thread_exit() does not return, so we should never get here */
+	panic("return from thread_exit in sys_exit\n");
+}
+
+
+#else
+
+/* this implementation of sys__exit does not do anything with the exit code */
+/* this needs to be fixed to get exit() and waitpid() working properly */
 void sys__exit(int exitcode) {
 
-  struct addrspace *as;
-  struct proc *p = curproc;
+	struct addrspace *as;
+	struct proc *p = curproc;
 
-  /*
-   * Idea: What if I make this process a zombie, instead of exiting?
-   * Then I can put the exit code somewhere in this process structure,
-   * but delete all its threads.
-   *
-   * But then how do I know when it's safe to completely clean the process,
-   * ie. kill the process in zombie state?
-   *
-   * Parent makes child. 
-   *
-   * Child is marked for becoming a zombie before dying.
-   *
-   * Child finishes his job, becomes zombie.
-   *
-   * Parent checks its code, and then kills it.
-   *
-   *
-   * Question: What if the parent does not care when the child dies?
-   * This forces the parent to always call waitPID to ensure the child is okay to die
-   */
+	/* for now, just include this to keep the compiler from complaining about
+	   an unused variable */
 
-  /*
-   * Idea 2: Make every process have a parent pointer, struct proc *parent.
-   *
-   * If the thread has a parent, then make it a zombie.
-   *
-   * When do we clean it? When its parent dies.
-   *
-   * Question: How many zombies can you accumulate this way? Is it a problem if you make
-   * too many zombies?
-   *
-   * I like Idea 2 better, so in the implementation of fork() I will include a pointer for
-   * the parent.
-   */
+	(void)exitcode;
 
-  /* for now, just include this to keep the compiler from complaining about
-     an unused variable */
+	DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
 
-  (void)exitcode;
+	KASSERT(curproc->p_addrspace != NULL);
+	as_deactivate();
+	/*
+	 * clear p_addrspace before calling as_destroy. Otherwise if
+	 * as_destroy sleeps (which is quite possible) when we
+	 * come back we'll be calling as_activate on a
+	 * half-destroyed address space. This tends to be
+	 * messily fatal.
+	 */
+	as = curproc_setas(NULL);
+	as_destroy(as);
 
-  DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
+	/* detach this thread from its process */
+	/* note: curproc cannot be used after this call */
 
-  KASSERT(curproc->p_addrspace != NULL);
-  as_deactivate();
-  /*
-   * clear p_addrspace before calling as_destroy. Otherwise if
-   * as_destroy sleeps (which is quite possible) when we
-   * come back we'll be calling as_activate on a
-   * half-destroyed address space. This tends to be
-   * messily fatal.
-   */
-  as = curproc_setas(NULL);
-  as_destroy(as);
+	//Question: Do we know that the process has only a single thread left, 
+	//indicated by curthread?
+	proc_remthread(curthread);
 
-  /* detach this thread from its process */
-  /* note: curproc cannot be used after this call */
+	/* if this is the last user process in the system, proc_destroy()
+	   will wake up the kernel menu thread */
+	proc_destroy(p);
 
-  //Question: Do we know that the process has only a single thread left, 
-  //indicated by curthread?
-  proc_remthread(curthread);
-
-  /* if this is the last user process in the system, proc_destroy()
-     will wake up the kernel menu thread */
-  proc_destroy(p);
-  
-  thread_exit();
-  /* thread_exit() does not return, so we should never get here */
-  panic("return from thread_exit in sys_exit\n");
+	thread_exit();
+	/* thread_exit() does not return, so we should never get here */
+	panic("return from thread_exit in sys_exit\n");
 }
+#endif //OPT_A2
 
-
-/* stub handler for getpid() system call                */
-int
+#ifdef OPT_A2
+	int
 sys_getpid(pid_t *retval)
 {
-  /* for now, this is just a stub that always returns a PID of 1 */
-  /* you need to fix this to make it work properly */
-  *retval = 1;
-  return(0);
-}
+	//Question: Can this ever fail?
+	if(curproc == NULL)
+	{
+		return ESRCH;
+	}
 
+	*retval = curproc->p_pid;
+	return 0;
+}
+#else
+/* stub handler for getpid() system call                */
+	int
+sys_getpid(pid_t *retval)
+{
+	/* for now, this is just a stub that always returns a PID of 1 */
+	/* you need to fix this to make it work properly */
+	*retval = 1;
+	return(0);
+}
+#endif //OPT_A2
+
+
+#ifdef OPT_A2
+int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval)
+{
+	int exitstatus;
+	int result;
+
+	/* this is just a stub implementation that always reports an
+	   exit status of 0, regardless of the actual exit status of
+	   the specified process.   
+	   In fact, this will return 0 even if the specified process
+	   is still running, and even if it never existed in the first place.
+
+	   Fix this!
+	   */
+
+	if (options != 0) {
+		return(EINVAL);
+	}
+
+
+	//Case 1: The child does not exist.
+
+	//Case 2: The child exists but is not running; it is a zombie.
+
+	//Case 3: The child exists and is running. Need to go to sleep.
+
+	/* for now, just pretend the exitstatus is 0 */
+	exitstatus = 0;
+
+
+	//copies a block of sizeof(int) from the kernel address &exitstatus to
+	//the user address status
+	//
+	//We should be careful about doing this... so there is a whole function for it.
+	result = copyout((void *)&exitstatus,status,sizeof(int));
+
+	if (result) {
+		return(result);
+	}
+	*retval = pid;
+	return(0);
+}
+#else
 /* stub handler for waitpid() system call                */
 
-int
+	int
 sys_waitpid(pid_t pid,
-	    userptr_t status,
-	    int options,
-	    pid_t *retval)
+		userptr_t status,
+		int options,
+		pid_t *retval)
 {
-  int exitstatus;
-  int result;
+	int exitstatus;
+	int result;
 
-  /* this is just a stub implementation that always reports an
-     exit status of 0, regardless of the actual exit status of
-     the specified process.   
-     In fact, this will return 0 even if the specified process
-     is still running, and even if it never existed in the first place.
+	/* this is just a stub implementation that always reports an
+	   exit status of 0, regardless of the actual exit status of
+	   the specified process.   
+	   In fact, this will return 0 even if the specified process
+	   is still running, and even if it never existed in the first place.
 
-     Fix this!
-  */
+	   Fix this!
+	   */
 
-  if (options != 0) {
-    return(EINVAL);
-  }
-  /* for now, just pretend the exitstatus is 0 */
-  exitstatus = 0;
-  result = copyout((void *)&exitstatus,status,sizeof(int));
-  if (result) {
-    return(result);
-  }
-  *retval = pid;
-  return(0);
+	if (options != 0) {
+		return(EINVAL);
+	}
+	/* for now, just pretend the exitstatus is 0 */
+	exitstatus = 0;
+	result = copyout((void *)&exitstatus,status,sizeof(int));
+	if (result) {
+		return(result);
+	}
+	*retval = pid;
+	return(0);
 }
+#endif //OPT_A2
 
 #ifdef OPT_A2
 
@@ -152,73 +222,93 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 {
 	struct proc *p = curproc;
 
-	//what is the name? it should be identical. so lets just make the names identical.
-	//maybe something like parentName + "-child" would be better, but whatever.
+	//Assign the child in the beginning, so we can use it in the name.
+	//Can help for debugging purposes.
+
+	spinlock_acquire(&pid_counter_mutex);
+	++pid_counter;
+	pid_t child_pid = pid_counter;
+	spinlock_release(&pid_counter_mutex);
+
+
+	//TODO: Make sure child_name works out
 	//
-	//besides, we expect later that the child will call exec, which will change the name
-	struct proc *child = proc_create_runprogram(p->p_name);
+	//I want the child name to appear as {parent_name}-{child_pid}
+
+	int length = snprintf(NULL, 0, "%d", child_pid);
+
+	char pid_str[length + 1];
+
+	snprintf(pid_str, length, "%d", child_pid);
 
 
-	if(child == NULL) {
-		
+	char *child_name = kmalloc((strlen(p->p_name) + length + 1) * sizeof(char));
+
+	if (child_name == NULL) {
 		return ENOMEM;
-
-	} else {
-		
-		struct addrspace *current_as = curproc_getas();
-
-		struct addrspace *new_as;
-
-		int rc = as_copy(current_as, &new_as);
-
-		if(rc != 0)
-		{
-			//Kill the child process (which has no threads).
-			proc_destroy(child);
-
-			return EADDRNOTAVAIL;
-		}
-
-		//now associate the child's address space with the new
-		
-		child->p_addrspace = new_as;
-
-		// we need to assign the child a new PID.
-		// (In real life, we do need reusable PIDs).		
-		
-		spinlock_acquire(&pid_counter_mutex);
-		++pid_counter;
-		pid_t child_pid = pid_counter;
-		spinlock_release(&pid_counter_mutex);
-
-		child->p_pid = child_pid;
-
-		struct trapframe *tf_copy = kmalloc(sizeof(struct trapframe)); //Remember to free this later
-
-		if(tf_copy == NULL)
-		{
-			proc_destroy(child);
-			return ENOMEM;
-		}
-
-		*tf_copy = *tf;
-
-		//Put in the child_pid for debugging
-		rc = thread_fork(curthread->t_name, child, enter_forked_process, (void *) tf_copy, (unsigned long) child_pid);
-
-		if(rc != 0)
-		{
-			kfree(tf_copy);
-			proc_destroy(child);
-			return rc;
-		}
-		
-		//set retval to child_pid and return 0.
-		//syscall will handle the trapframe registers
-		*retval = child_pid;
-		return 0;
-
 	}
+
+	strcpy(child_name, p->p_name);
+	strcat(child_name, pid_str);
+
+	struct proc *child = proc_create_runprogram(child_name);
+
+	if (child == NULL) {
+		return ENOMEM;
+	}
+
+
+	struct addrspace *current_as = curproc_getas();
+
+	struct addrspace *new_as;
+
+	int rc = as_copy(current_as, &new_as);
+
+	if (rc != 0)
+	{
+		//Kill the child process (which has no threads).
+		proc_destroy(child);
+
+		return EADDRNOTAVAIL;
+	}
+
+	//now associate the child's address space with the new
+	//and initialize other fields too.
+
+	child->p_addrspace = new_as;
+	child->parent = curproc;
+
+
+	// we need to assign the child a new PID.
+	// (In real life, we do need reusable PIDs).		
+
+	child->p_pid = child_pid;
+
+	struct trapframe *tf_copy = kmalloc(sizeof(struct trapframe)); //This will be kfree-ed in the child
+
+	if(tf_copy == NULL)
+	{
+		proc_destroy(child);
+		return ENOMEM;
+	}
+
+	*tf_copy = *tf;
+
+	//Put in the child_pid for debugging
+	rc = thread_fork(curthread->t_name, child, enter_forked_process, (void *) tf_copy, (unsigned long) child_pid);
+
+	if(rc != 0)
+	{
+		kfree(tf_copy);
+		proc_destroy(child);
+		return rc;
+	}
+
+	//set retval to child_pid and return 0.
+	//syscall will handle the trapframe registers
+	*retval = child_pid;
+	return 0;
+
 
 }
 
