@@ -175,6 +175,8 @@ syscall(struct trapframe *tf)
 	KASSERT(curthread->t_iplhigh_count == 0);
 }
 
+
+#ifdef OPT_A2
 /*
  * Enter user mode for a newly forked process.
  *
@@ -186,20 +188,12 @@ syscall(struct trapframe *tf)
 void
 enter_forked_process(void *tf_p, unsigned long child_pid)
 {
-	DEBUG(DB_THREADS, "Current thread name: %s\n", curthread->t_name);
-	DEBUG(DB_THREADS, "Making new thread with PID: %lx\n", child_pid);
-
 	// we have to make a copy of the trapframe.
 	//
 	// We could just give both the parent and child the same
 	// trapframe pointer... But this introduces problems in
 	// synchronization. Let's just use a simple approach of copying.
 	
-
-	struct proc *p = curproc;
-
-	(void) p; //suppress
-
 	struct trapframe tf_c = * (struct trapframe *) tf_p; 
 
 	//this allocates the trapfrome to the child's kernel stack.
@@ -214,7 +208,17 @@ enter_forked_process(void *tf_p, unsigned long child_pid)
 	//The tf_p is actually a copy of the parent's trapframe, allocated in the OS heap.
 	//Since we are done using it now, let's delete it.
 	struct trapframe *tmp = (struct trapframe *) tf_p;
-	kfree(tmp); //why cant i free this ??
+	kfree(tmp); 
 
 	mips_usermode(&tf_c); //Enter user mode. A call here should not return I think...
+	(void) child_pid; //suppress warning
 }
+#else
+
+void
+enter_forked_process(struct trapframe *tf)
+{
+	(void) tf;
+}
+
+#endif //OPT_A2

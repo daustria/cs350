@@ -43,7 +43,6 @@
  */
 
 #include <types.h>
-#include <proc.h>
 #include <current.h>
 #include <addrspace.h>
 #include <vnode.h>
@@ -52,6 +51,13 @@
 #include <kern/fcntl.h>  
 #include <syscall.h>
 #include "opt-A2.h"
+
+#ifdef OPT_A2
+/* For the childarray struct in proc.h */
+#define CHILDINLINE
+#endif //OPT_A2
+
+#include <proc.h>
 
 #ifdef OPT_A2
 extern volatile pid_t pid_counter;
@@ -107,6 +113,18 @@ proc_create(const char *name)
 #ifdef UW
 	proc->console = NULL;
 #endif // UW
+
+#ifdef OPT_A2
+	proc->parent = NULL;
+	proc->p_children = childarray_create();
+	childarray_init(proc->p_children);
+
+	proc->p_pid = 0;
+
+	proc->p_zombie_mutex = lock_create(name);
+	proc->p_zombie = cv_create(name);
+
+#endif //OPT_A2
 
 	return proc;
 }
@@ -168,6 +186,14 @@ proc_destroy(struct proc *proc)
 	}
 #endif // UW
 
+#ifdef OPT_A2
+	
+	childarray_destroy(proc->p_children);
+	cv_destroy(proc->p_zombie);
+	lock_destroy(proc->p_zombie_mutex);
+
+#endif //OPT_A2
+
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
 
@@ -187,9 +213,9 @@ proc_destroy(struct proc *proc)
 	  V(no_proc_sem);
 	}
 	V(proc_count_mutex);
-#endif // UW
-	
+#endif // UW	
 
+	//Handle deletion of p_children in sys__exit()
 }
 
 /*
@@ -216,10 +242,6 @@ proc_bootstrap(void)
 
 #ifdef OPT_A2
 
- /////////////////////////////////////////////////////////////////
- //sys_fork()
- /////////////////////////////////////////////////////////////////
- //
  // Initialize the counter for PID assignment here.
 
  // Question: where do we call spinlock_cleanup()? 
@@ -234,8 +256,55 @@ proc_bootstrap(void)
 
 #endif // OPT_A2
 
+}
+
+#ifdef OPT_A2
+
+struct proc *proc_getchild(struct proc *proc, pid_t childid)
+{	
+	spinlock_acquire(&proc->p_lock);
+	int num_children = childarray_num(proc->p_children); 
+	for(int i = 0; i < num_children; ++i)
+	{
+		struct proc *current = childarray_get(proc->p_children, i);
+		if(current->p_pid == childid) {	
+			spinlock_release(&proc->p_lock);
+			return current;
+		}
+	}
+	spinlock_release(&proc->p_lock);
+	return NULL;
+}
+void proc_destroy_zombie_children(struct proc *proc)
+{	
+	KASSERT(proc != NULL);
+
+	int num_children = childarray_num(proc->p_children); 
+
+	for(int i = 0; i < num_children;)
+	{
+		struct proc *current = childarray_get(proc->p_children, i);
+		spinlock_acquire(&current->p_lock);
+
+		if(current->zombie) {
+			childarray_remove(proc->p_children, i);	
+			spinlock_release(&current->p_lock);
+			proc_destroy(current);
+
+			--num_children;
+			//don't increase the index, all the other elements in the array past this one will be shifted downwards
+			
+		} else {
+			/* Set our child's parent pointer to NULL, so they know to
+			 * fully delete themselves in sys__exit() */
+			current->parent = NULL;
+			spinlock_release(&current->p_lock);
+			++i;
+		}
+	}
 
 }
+#endif //OPT_A2
 
 /*
  * Create a fresh proc for use by runprogram.

@@ -47,19 +47,40 @@ void sys__exit(int exitcode)
 	/* detach this thread from its process */
 	/* note: curproc cannot be used after this call */
 
-	//Question: Do we know that the process has only a single thread left, 
-	//indicated by curthread?
 	proc_remthread(curthread);
 
-	/* if this is the last user process in the system, proc_destroy()
-	   will wake up the kernel menu thread */
-	proc_destroy(p);
+	/* We are a zombie now so lets signal in case our parent was waiting on us */
+	cv_signal(p->p_zombie, p->p_zombie_mutex);
 
-	thread_exit();
-	/* thread_exit() does not return, so we should never get here */
-	panic("return from thread_exit in sys_exit\n");
+
+	//TODO: This should perhaps return a boolean on if all our children were dead, so we know if we can delete ourselves 
+	proc_destroy_zombie_children(p);
+
+	/*
+	 * Three cases when we can fully delete ourselves:
+	 *
+	 * 1. Parent already exited
+	 *
+	 * 2. All our children are dead
+	 *
+	 * 3. Our parent has already called waitpid on us
+	 * (how would we know?...)
+	 *
+	 */
+	
+	/* fully delete ourselves if our parent is gone */
+	if(p->parent == NULL) {
+
+		/* if this is the last user process in the system, proc_destroy()
+		   will wake up the kernel menu thread */
+		proc_destroy(p);
+
+		thread_exit();
+		/* thread_exit() does not return, so we should never get here */
+		panic("return from thread_exit in sys_exit\n");
+	} 
+
 }
-
 
 #else
 
@@ -92,9 +113,14 @@ void sys__exit(int exitcode) {
 	/* detach this thread from its process */
 	/* note: curproc cannot be used after this call */
 
-	//Question: Do we know that the process has only a single thread left, 
-	//indicated by curthread?
+	/* Remember, processes other than the kernel process can be assumed to have only
+	 * one thread */
 	proc_remthread(curthread);
+
+	/*
+	 * Now our thread and address space our freed. The true deletion will 
+	 * be handled in proc_destroy.
+	 */
 
 	/* if this is the last user process in the system, proc_destroy()
 	   will wake up the kernel menu thread */
@@ -107,7 +133,7 @@ void sys__exit(int exitcode) {
 #endif //OPT_A2
 
 #ifdef OPT_A2
-	int
+int
 sys_getpid(pid_t *retval)
 {
 	//Question: Can this ever fail?
@@ -121,7 +147,7 @@ sys_getpid(pid_t *retval)
 }
 #else
 /* stub handler for getpid() system call                */
-	int
+int
 sys_getpid(pid_t *retval)
 {
 	/* for now, this is just a stub that always returns a PID of 1 */
@@ -147,20 +173,47 @@ int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval)
 	   Fix this!
 	   */
 
+	/* We are not required to implement any options */
 	if (options != 0) {
-		return(EINVAL);
+		return(EINVAL);	
 	}
 
 
-	//Case 1: The child does not exist.
-
-	//Case 2: The child exists but is not running; it is a zombie.
-
-	//Case 3: The child exists and is running. Need to go to sleep.
-
 	/* for now, just pretend the exitstatus is 0 */
-	exitstatus = 0;
+	exitstatus = 0; //This is the code from exit()? What is this..
 
+	struct proc *p = curproc;
+
+	struct proc *child = proc_getchild(p, pid);
+
+	if (child == NULL) {
+		//The PID is not one of your children. No business calling waitpid then.
+		return ECHILD;
+	} 
+
+	/* Wait until child becomes a zombie and then destroy it */
+
+	/* Note: we fall asleep on the child's CV, since we are waiting on the child to become 
+	 * a zombie */
+	
+	while(1)
+	{
+
+		lock_acquire(child->p_zombie_mutex);
+		bool is_alive = !(child->zombie);
+
+		if(is_alive) {
+			cv_wait(child->p_zombie, child->p_zombie_mutex); 
+		} else {
+			lock_release(child->p_zombie_mutex);
+			break;	
+		}
+	}
+
+	exitstatus = _MKWAIT_EXIT(child->exitstatus);
+
+	/* We already got the exit status, so kill the zombie child now */
+	proc_destroy(child);
 
 	//copies a block of sizeof(int) from the kernel address &exitstatus to
 	//the user address status
@@ -232,7 +285,6 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 
 
 	//TODO: Make sure child_name works out
-	//
 	//I want the child name to appear as {parent_name}-{child_pid}
 
 	int length = snprintf(NULL, 0, "%d", child_pid);
@@ -240,7 +292,6 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 	char pid_str[length + 1];
 
 	snprintf(pid_str, length, "%d", child_pid);
-
 
 	char *child_name = kmalloc((strlen(p->p_name) + length + 1) * sizeof(char));
 

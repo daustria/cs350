@@ -38,6 +38,8 @@
 
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
+#include <array.h>
+#include <synch.h>
 #include "opt-A2.h"
 
 struct addrspace;
@@ -45,6 +47,23 @@ struct vnode;
 #ifdef UW
 struct semaphore;
 #endif // UW
+
+struct proc;
+
+#ifdef OPT_A2
+
+//Declare a struct children structure, which is an array
+//of pointers to proc
+
+DECLARRAY_BYTYPE(childarray, struct proc);
+
+#ifndef CHILDINLINE
+#define CHILDINLINE INLINE
+#endif //CHILDINLINE
+
+DEFARRAY_BYTYPE(childarray, struct proc, CHILDINLINE);
+
+#endif //OPT_A2
 
 /*
  * Process structure.
@@ -74,8 +93,26 @@ struct proc {
 	/* add more material here as needed */
 
 #ifdef OPT_A2
-  	struct proc *parent;
+
+	/* Keep track of the parent, so that when we exit, we can decide either to be a zombie (so our parent can read our exit code) or 
+	 * just exit and kill ourselves if our parent is already dead */
+  	struct proc *parent;  
+
+	/* Keep track of our children, for waitpid (since a thread can only call waitpid on its children) */
+	struct childarray *p_children;
 	pid_t p_pid;
+
+
+	/* These will be used for sleeping on our child when we call waitpid, waiting for 
+	 * the child to become a zombie */
+	struct cv *p_zombie;
+	struct lock *p_zombie_mutex;
+
+	int exitstatus;
+
+	/* For now we'll say a zombie is a process where the threadarray and address space are claned up*/
+	bool zombie; 
+
 #endif /* OPT_A2 */
 };
 
@@ -108,5 +145,14 @@ struct addrspace *curproc_getas(void);
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *curproc_setas(struct addrspace *);
 
+#ifdef OPT_A2
+
+/* Fetch the child process whose pid matches childid. If none exist, return NULL */
+struct proc *proc_getchild(struct proc *proc, pid_t childid);
+
+/* Delete zombie children. To be used in sys__exit() (when becoming a zombie) */
+void proc_destroy_zombie_children(struct proc *proc);
+
+#endif //OPT_A2
 
 #endif /* _PROC_H_ */
