@@ -25,13 +25,7 @@ void sys__exit(int exitcode)
 	struct addrspace *as;
 	struct proc *p = curproc;
 
-	/* for now, just include this to keep the compiler from complaining about
-	   an unused variable */
-
-	(void)exitcode;
-
-	DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
-	DEBUG(DB_SYSCALL, "sys_exit | proc:%s\n", p->p_name);
+	DEBUG(DB_SYSCALL, "sys_exit | proc:%s (pid:%d) exitcode:%d\n", p->p_name, p->p_pid, exitcode);
 
 	KASSERT(curproc->p_addrspace != NULL);
 	as_deactivate();
@@ -54,7 +48,7 @@ void sys__exit(int exitcode)
 	/* We are a zombie now so lets signal in case our parent was waiting on us */
 	cv_signal(p->p_zombie, p->p_zombie_mutex);
 
-	//TODO: This should perhaps return a boolean on if all our children were dead, so we know if we can delete ourselves 
+	//TODO: This should perhaps return a boolean on if all our children are dead, so we know if we can delete ourselves 
 	proc_destroy_zombie_children(p);
 
 	/*
@@ -67,7 +61,7 @@ void sys__exit(int exitcode)
 	 * 3. Our parent has already called waitpid on us
 	 * (how would we know? ... should we set a flag?)
 	 *
-	 * TODO: Right now we are only handling the first case. Is it necessary to handle the second or third cases?
+	 * Right now we are only handling the first case. Is it necessary to handle the second or third cases?
 	 * Probably in real world, but I think the tests should pass even if we don't fully delete all our zombies
 	 * or 'pass enough' at the very least
 	 */
@@ -83,6 +77,8 @@ void sys__exit(int exitcode)
 	} else {
 
 		DEBUG(DB_SYSCALL,"_exit | proc:%s (pid:%d) becoming a zombie instead of fully deleting itself\n", p->p_name, p->p_pid);
+
+		p->exitstatus = exitcode;
 
 		lock_acquire(p->p_zombie_mutex);
 		p->zombie = true;
@@ -257,8 +253,10 @@ int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval)
 	if (result) {
 		return(result);
 	}
+
 	*retval = pid;
-	return(0);
+
+	return 0;
 }
 #else
 /* stub handler for waitpid() system call */
