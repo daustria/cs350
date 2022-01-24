@@ -105,7 +105,7 @@ struct proc {
 
 	/* These will be used for sleeping on our child when we call waitpid, waiting for 
 	 * the child to become a zombie */
-	struct cv *p_zombie;
+	struct cv *p_zombie_cv;
 	struct lock *p_zombie_mutex;
 
 	int exitstatus;
@@ -149,7 +149,6 @@ struct addrspace *curproc_setas(struct addrspace *);
 
 /* Remove child from the childarray of parent */
 void proc_removechild(struct proc *parent, struct proc *child);
-
 
 /* Add child as a child process of parent. Return retval of array_addchild (0 if successful).
  * Made for use inside sys_fork */

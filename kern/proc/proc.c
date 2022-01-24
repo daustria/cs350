@@ -122,7 +122,7 @@ proc_create(const char *name)
 	proc->p_pid = 0;
 
 	proc->p_zombie_mutex = lock_create(name);
-	proc->p_zombie = cv_create(name);
+	proc->p_zombie_cv = cv_create(name);
 
 #endif //OPT_A2
 
@@ -187,9 +187,10 @@ proc_destroy(struct proc *proc)
 #endif // UW
 
 #ifdef OPT_A2
-	
+
+	/* Maybe I should first set those children to null pointer? */
 	childarray_destroy(proc->p_children);
-	cv_destroy(proc->p_zombie);
+	cv_destroy(proc->p_zombie_cv);
 	lock_destroy(proc->p_zombie_mutex);
 
 #endif //OPT_A2
@@ -328,8 +329,6 @@ void proc_destroy_zombie_children(struct proc *proc)
 	KASSERT(proc != NULL);
 	DEBUG(DB_SYSCALL,"proc_destroy_zombie_children | proc:%s\n", proc->p_name);
 
-	/* Delete any zombie children while in place*/
-
 	int num_children = childarray_num(proc->p_children);
 
 	for(int i = 0; i < num_children;)
@@ -348,8 +347,9 @@ void proc_destroy_zombie_children(struct proc *proc)
 
 			--num_children;
 			//don't increase the index, all the other elements in the array past this one will be shifted downwards
-			
+			//
 		} else {
+
 			/* Set our child's parent pointer to NULL, so they know to
 			 * fully delete themselves in sys__exit() */
 			current->parent = NULL;
@@ -358,6 +358,7 @@ void proc_destroy_zombie_children(struct proc *proc)
 		}
 	}
 
+	return all_children_zombies;
 }
 #endif //OPT_A2
 

@@ -25,6 +25,8 @@ void sys__exit(int exitcode)
 	struct addrspace *as;
 	struct proc *p = curproc;
 
+	lock_acquire(p->p_zombie_mutex);
+
 	DEBUG(DB_SYSCALL, "sys_exit | proc:%s (pid:%d) exitcode:%d\n", p->p_name, p->p_pid, exitcode);
 
 	KASSERT(curproc->p_addrspace != NULL);
@@ -44,11 +46,6 @@ void sys__exit(int exitcode)
 
 	proc_remthread(curthread);
 
-	DEBUG(DB_SYSCALL, "_exit | proc:%s (pid:%d) has become a zombie, signalling\n", p->p_name, p->p_pid);
-	/* We are a zombie now so lets signal in case our parent was waiting on us */
-	cv_signal(p->p_zombie, p->p_zombie_mutex);
-
-	//TODO: This should perhaps return a boolean on if all our children are dead, so we know if we can delete ourselves 
 	proc_destroy_zombie_children(p);
 
 	/*
@@ -56,7 +53,7 @@ void sys__exit(int exitcode)
 	 *
 	 * 1. Parent already exited
 	 *
-	 * 2. All our children are dead
+	 * 2. All our children are dead (what if my parent wants to call waitpid on me?)
 	 *
 	 * 3. Our parent has already called waitpid on us
 	 * (how would we know? ... should we set a flag?)
@@ -66,25 +63,41 @@ void sys__exit(int exitcode)
 	 * or 'pass enough' at the very least
 	 */
 	
-	/* fully delete ourselves if our parent is gone */
-	if(p->parent == NULL) {
+	/* fully delete ourselves if our parent is dead*/
+	bool fully_delete = false;
 
-		DEBUG(DB_SYSCALL,"_exit | proc:%s fully delete ourself\n", p->p_name); 
+	if (p->parent == NULL) {
+		fully_delete = true;
+	} else {
+		lock_acquire(p->parent->p_zombie_mutex);
+
+		if(p->parent->zombie) {
+			fully_delete = true;
+		}
+
+		lock_release(p->parent->p_zombie_mutex);
+	}
+
+	if(fully_delete) {
+
+		DEBUG(DB_SYSCALL,"_exit | proc:%s (pid:%d) fully deleting itself\n", p->p_name, p->p_pid); 
 
 		/* if this is the last user process in the system, proc_destroy()
 		   will wake up the kernel menu thread */
 		proc_destroy(p);
 	} else {
 
-		DEBUG(DB_SYSCALL,"_exit | proc:%s (pid:%d) becoming a zombie instead of fully deleting itself\n", p->p_name, p->p_pid);
+		DEBUG(DB_SYSCALL, "_exit | proc:%s (pid:%d) becoming a zombie instead of fully deleting, signaling parent %s (pid:%d)\n", 
+				p->p_name, p->p_pid, p->parent->p_name, p->parent->p_pid);
+
+		/* We are a zombie now so lets signal in case our parent was waiting on us */
+		cv_signal(p->p_zombie_cv, p->p_zombie_mutex);
 
 		p->exitstatus = exitcode;
-
-		lock_acquire(p->p_zombie_mutex);
 		p->zombie = true;
-		lock_release(p->p_zombie_mutex);	
-
 	}
+
+	lock_release(p->p_zombie_mutex);
 
 	thread_exit();
 
@@ -224,7 +237,7 @@ int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval)
 
 		if(!is_zombie) {
 			DEBUG(DB_SYSCALL,"sys_waitpid | proc:%s sleeping for %s (pid:%d) to become zombie\n", p->p_name, child->p_name, child->p_pid);
-			cv_wait(child->p_zombie, child->p_zombie_mutex); 
+			cv_wait(child->p_zombie_cv, child->p_zombie_mutex); 
 		} else {
 			DEBUG(DB_SYSCALL,"sys_waitpid | proc:%s awaken since %s (pid:%d) is dead\n", p->p_name, child->p_name, child->p_pid);
 			lock_release(child->p_zombie_mutex);
@@ -239,9 +252,15 @@ int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval)
 
 	/* We already got the exit status, so kill the zombie child now */
 
-	//TODO: Remove this child in the childarray
 	proc_removechild(p, child);
 
+	DEBUG(DB_SYSCALL,"sys_waitpid | child (pid:%d) of %s exited with status %d\n", pid, p->p_name, child->exitstatus);
+
+	DEBUG(DB_SYSCALL,"sys_waitpid | %s(pid:%d) destroying child:%s(pid:%d)\n", p->p_name, p->p_pid, child->p_name, child->p_pid);
+
+	//TODO: Fix a bug with this line. I believe there is a race condition of destroying the child process here, and a child releasing its lock (which is destroyed in proc_destroy)
+	//in sys__exit.
+	
 	proc_destroy(child);
 
 	//copies a block of sizeof(int) from the kernel address &exitstatus to
@@ -304,7 +323,6 @@ struct spinlock *pid_counter_mutex_p;
 
 int sys_fork(struct trapframe *tf, pid_t *retval)
 {
-
 	struct proc *p = curproc;
 
 	//Assign the child in the beginning, so we can use it in the name.
@@ -330,26 +348,29 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 	strcat(child_name, "-child");
 
 
-	DEBUG(DB_SYSCALL,"sys_fork | child_name:%s pid:%d\n", child_name, child_pid);
+	DEBUG(DB_SYSCALL,"sys_fork | pid:%d, child_name:%s (pid:%d)\n", p->p_pid, child_name, child_pid);
 
 	struct proc *child = proc_create_runprogram(child_name);
 
 	if (child == NULL) {
+		DEBUG(DB_SYSCALL,"sys_fork | ERROR: Failed to create child (pid:%d)", child_pid);
 		return ENOMEM;
 	}
 
-
+	/*Create a copy of the address space for the child */
 	struct addrspace *current_as = curproc_getas();
 
 	struct addrspace *new_as;
 
+	//TODO: Why isnt this working?? can i get the implementation of as_create()?
 	int rc = as_copy(current_as, &new_as);
 
 	if (rc != 0)
 	{
+		DEBUG(DB_SYSCALL,"sys_fork | ERROR: Failed to copy address space from %s (pid:%d) to child (pid:%d)\n", p->p_name, p->p_pid, child_pid);
+
 		//Kill the child process (which has no threads).
 		proc_destroy(child);
-
 		return EADDRNOTAVAIL;
 	}
 
@@ -369,6 +390,7 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 
 	if(tf_copy == NULL)
 	{
+		DEBUG(DB_SYSCALL,"sys_fork | ERROR: kmalloc failure when copying trapframe for child (pid:%d)\n", p->p_pid);
 		proc_destroy(child);
 		return ENOMEM;
 	}
