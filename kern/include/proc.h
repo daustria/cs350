@@ -147,6 +147,14 @@ struct addrspace *curproc_setas(struct addrspace *);
 
 #ifdef OPT_A2
 
+/* Remove child from the childarray of parent */
+void proc_removechild(struct proc *parent, struct proc *child);
+
+
+/* Add child as a child process of parent. Return retval of array_addchild (0 if successful).
+ * Made for use inside sys_fork */
+int proc_addchild(struct proc *parent, struct proc *child);
+
 /* Fetch the child process whose pid matches childid. If none exist, return NULL */
 struct proc *proc_getchild(struct proc *proc, pid_t childid);
 

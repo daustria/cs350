@@ -260,14 +260,61 @@ proc_bootstrap(void)
 
 #ifdef OPT_A2
 
+int proc_addchild(struct proc *parent, struct proc *child)
+{
+	DEBUG(DB_SYSCALL, "proc_addchild | parent:%s child:%s (pid:%d) \n", parent->p_name, child->p_name, child->p_pid);
+
+	spinlock_acquire(&parent->p_lock);
+	struct childarray *children = parent->p_children;
+
+	int retval = childarray_add(children, child, NULL);
+
+	spinlock_release(&parent->p_lock);
+
+	return retval;
+}
+
+void proc_removechild(struct proc *parent, struct proc *child)
+{
+	DEBUG(DB_SYSCALL, "proc_removechild | parent:%s child:%s (pid:%d) \n", parent->p_name, child->p_name, child->p_pid);
+
+	spinlock_acquire(&parent->p_lock);
+
+	struct childarray *children = parent->p_children;
+	int num_children = childarray_num(parent->p_children);
+
+	int child_pid = child->p_pid;
+
+	for(int i = 0; i < num_children; ++i)
+	{
+		struct proc *current = childarray_get(parent->p_children, i);
+		spinlock_acquire(&current->p_lock);
+
+		if(current->p_pid == child_pid) {
+			childarray_remove(children, i);
+			spinlock_release(&current->p_lock);
+			break;
+		}
+
+		spinlock_release(&current->p_lock);
+	}
+	spinlock_release(&parent->p_lock);
+
+}
+
 struct proc *proc_getchild(struct proc *proc, pid_t childid)
 {	
+	DEBUG(DB_SYSCALL, "proc_getchild | proc:%s\n", proc->p_name);
+
 	spinlock_acquire(&proc->p_lock);
+
 	int num_children = childarray_num(proc->p_children); 
 	for(int i = 0; i < num_children; ++i)
 	{
 		struct proc *current = childarray_get(proc->p_children, i);
 		if(current->p_pid == childid) {	
+			
+			DEBUG(DB_SYSCALL,"proc_getchild | proc:%s acquired child %s pid:%d\n", proc->p_name, current->p_name, current->p_pid);
 			spinlock_release(&proc->p_lock);
 			return current;
 		}
@@ -275,18 +322,26 @@ struct proc *proc_getchild(struct proc *proc, pid_t childid)
 	spinlock_release(&proc->p_lock);
 	return NULL;
 }
+
 void proc_destroy_zombie_children(struct proc *proc)
 {	
 	KASSERT(proc != NULL);
+	DEBUG(DB_SYSCALL,"proc_destroy_zombie_children | proc:%s\n", proc->p_name);
 
-	int num_children = childarray_num(proc->p_children); 
+	/* Delete any zombie children while in place*/
+
+	int num_children = childarray_num(proc->p_children);
 
 	for(int i = 0; i < num_children;)
 	{
 		struct proc *current = childarray_get(proc->p_children, i);
+
 		spinlock_acquire(&current->p_lock);
 
 		if(current->zombie) {
+
+			DEBUG(DB_SYSCALL, "proc_destroy_zombie_children | proc:%s\n deleting child:%s\n", proc->p_name, current->p_name);
+
 			childarray_remove(proc->p_children, i);	
 			spinlock_release(&current->p_lock);
 			proc_destroy(current);

@@ -532,6 +532,18 @@ cmd_dth(int n, char **a)
 	return 0;
 }
 
+// Option for assignment 0
+static
+int
+cmd_dsy(int n, char **a)
+{
+	(void)n;
+	(void)a;
+
+	dbflags |= DB_SYSCALL;
+	return 0;
+}
+
 ////////////////////////////////////////
 //
 // Command table.
@@ -602,7 +614,8 @@ static struct {
 	{ "fs4",	writestress2 },
 	{ "fs5",	createstress },
 
-	{ "dth", 	cmd_dth }
+	{ "dth", 	cmd_dth },
+	{ "dsy", 	cmd_dsy }
 };
 
 /*
