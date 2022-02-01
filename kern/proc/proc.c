@@ -123,6 +123,7 @@ proc_create(const char *name)
 
 	proc->p_zombie_mutex = lock_create(name);
 	proc->p_zombie_cv = cv_create(name);
+	proc->zombie = false;
 
 #endif //OPT_A2
 
@@ -358,8 +359,8 @@ void proc_destroy_zombie_children(struct proc *proc)
 		}
 	}
 
-	return all_children_zombies;
 }
+
 #endif //OPT_A2
 
 /*

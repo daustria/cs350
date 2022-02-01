@@ -68,11 +68,13 @@ void sys__exit(int exitcode)
 
 	if (p->parent == NULL) {
 		fully_delete = true;
+		DEBUG(DB_SYSCALL,"_exit | proc:%s (pid:%d) fully deleting itself because no parent\n", p->p_name, p->p_pid); 
 	} else {
 		lock_acquire(p->parent->p_zombie_mutex);
 
 		if(p->parent->zombie) {
 			fully_delete = true;
+			DEBUG(DB_SYSCALL,"_exit | proc:%s (pid:%d) fully deleting itself because parent is a zombie\n", p->p_name, p->p_pid); 
 		}
 
 		lock_release(p->parent->p_zombie_mutex);
@@ -80,11 +82,11 @@ void sys__exit(int exitcode)
 
 	if(fully_delete) {
 
-		DEBUG(DB_SYSCALL,"_exit | proc:%s (pid:%d) fully deleting itself\n", p->p_name, p->p_pid); 
-
+		lock_release(p->p_zombie_mutex);
 		/* if this is the last user process in the system, proc_destroy()
 		   will wake up the kernel menu thread */
 		proc_destroy(p);
+
 	} else {
 
 		DEBUG(DB_SYSCALL, "_exit | proc:%s (pid:%d) becoming a zombie instead of fully deleting, signaling parent %s (pid:%d)\n", 
@@ -95,9 +97,9 @@ void sys__exit(int exitcode)
 
 		p->exitstatus = exitcode;
 		p->zombie = true;
-	}
 
-	lock_release(p->p_zombie_mutex);
+		lock_release(p->p_zombie_mutex);
+	}
 
 	thread_exit();
 
@@ -245,23 +247,18 @@ int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval)
 		}
 	}
 
-
-	DEBUG(DB_SYSCALL,"sys_waitpid | child (pid:%d) of %s exited with status %d\n", pid, p->p_name, child->exitstatus);
-
 	exitstatus = _MKWAIT_EXIT(child->exitstatus);
+
+	DEBUG(DB_SYSCALL,"sys_waitpid | child (pid:%d) of %s exited with status %d\n", pid, p->p_name, exitstatus);
 
 	/* We already got the exit status, so kill the zombie child now */
 
-	proc_removechild(p, child);
+	//proc_removechild(p, child);
 
-	DEBUG(DB_SYSCALL,"sys_waitpid | child (pid:%d) of %s exited with status %d\n", pid, p->p_name, child->exitstatus);
+	//DEBUG(DB_SYSCALL,"sys_waitpid | %s(pid:%d) destroying child:%s(pid:%d)\n", p->p_name, p->p_pid, child->p_name, child->p_pid);
 
-	DEBUG(DB_SYSCALL,"sys_waitpid | %s(pid:%d) destroying child:%s(pid:%d)\n", p->p_name, p->p_pid, child->p_name, child->p_pid);
-
-	//TODO: Fix a bug with this line. I believe there is a race condition of destroying the child process here, and a child releasing its lock (which is destroyed in proc_destroy)
-	//in sys__exit.
-	
-	proc_destroy(child);
+	/* Do I need to destroy the child here? When I exit, this child should be destroyed in sys__exit, when I delete all the process' zombie children */
+	//proc_destroy(child);
 
 	//copies a block of sizeof(int) from the kernel address &exitstatus to
 	//the user address status
@@ -304,16 +301,17 @@ sys_waitpid(pid_t pid,
 	/* for now, just pretend the exitstatus is 0 */
 	exitstatus = 0;
 	result = copyout((void *)&exitstatus,status,sizeof(int));
+
 	if (result) {
 		return(result);
 	}
+
 	*retval = pid;
 	return(0);
 }
 #endif //OPT_A2
 
 #ifdef OPT_A2
-
 
 //////////////////////////////////////////////////////////////
 // sys_fork
@@ -423,7 +421,41 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 
 	return 0;
 
+}
 
+//////////////////////////////////////////////////////////////
+// sys_execv
+
+//TODO Get execv to work WITHOUT arguments for now. Ignore **args
+int sys_execv(const char *program, char **args)
+{
+
+	(void) args;
+
+
+	//copies a block of sizeof(int) from the kernel address &exitstatus to
+	//the user address status
+	//
+	//We should be careful about doing this... so there is a whole function for it.
+	//result = copyout((void *)&exitstatus,status,sizeof(int));
+
+
+	//Copy the program path from program in the user space to the kernel
+
+	char kprogram[128]; // Allocate 128 bytes per string
+
+	// Strings are going to be at most 128 bytes.
+	int result = copyinstr((const_userptr_t) program, (void *) kprogram, 128, NULL);
+
+	if(result){
+		DEBUG(DB_SYSCALL, " sys_execv | ERROR: could not copy program name\n");
+		return(result);
+	}
+
+
+	DEBUG(DB_SYSCALL, "sys_execv | copied program name:%s\n", kprogram);
+
+	return 0;
 }
 
 #endif /* OPT_A2 */
