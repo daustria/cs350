@@ -189,7 +189,22 @@ proc_destroy(struct proc *proc)
 
 #ifdef OPT_A2
 
-	/* Maybe I should first set those children to null pointer? */
+	/* Before we destroy the array, we require it to be empty first */
+	int childarray_size = childarray_num(proc->p_children);
+
+	while(childarray_size > 0)
+	{
+		int index = childarray_size - 1;
+
+		/* Set the child's parent pointer to NULL, so it knows to fully delete itself when sys__exit is called*/
+		struct proc *child = childarray_get(proc->p_children, index);
+		child->parent = NULL;
+
+		childarray_remove(proc->p_children, index);
+
+		childarray_size = childarray_num(proc->p_children);
+	}
+
 	childarray_destroy(proc->p_children);
 	cv_destroy(proc->p_zombie_cv);
 	lock_destroy(proc->p_zombie_mutex);

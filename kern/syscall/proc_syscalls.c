@@ -13,6 +13,11 @@
 #include "opt-A2.h"
 
 #ifdef OPT_A2
+#include <vfs.h>
+#include <kern/fcntl.h>
+#endif //OPT_A2
+
+#ifdef OPT_A2
 //Mutual exclusion for pid assignment in sys_fork()
 extern volatile pid_t pid_counter;
 extern struct spinlock pid_counter_mutex;
@@ -429,9 +434,7 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 //TODO Get execv to work WITHOUT arguments for now. Ignore **args
 int sys_execv(const char *program, char **args)
 {
-
 	(void) args;
-
 
 	//copies a block of sizeof(int) from the kernel address &exitstatus to
 	//the user address status
@@ -439,10 +442,9 @@ int sys_execv(const char *program, char **args)
 	//We should be careful about doing this... so there is a whole function for it.
 	//result = copyout((void *)&exitstatus,status,sizeof(int));
 
-
 	//Copy the program path from program in the user space to the kernel
 
-	char kprogram[128]; // Allocate 128 bytes per string
+	char kprogram[128]; // Allocate 128 bytes per string, a little wasteful but its fine for this course.
 
 	// Strings are going to be at most 128 bytes.
 	int result = copyinstr((const_userptr_t) program, (void *) kprogram, 128, NULL);
@@ -452,10 +454,69 @@ int sys_execv(const char *program, char **args)
 		return(result);
 	}
 
-
 	DEBUG(DB_SYSCALL, "sys_execv | copied program name:%s\n", kprogram);
 
-	return 0;
+	struct addrspace *as;
+	struct vnode *v;
+	vaddr_t entrypoint;
+
+	/* Open the file. */
+	result = vfs_open(kprogram, O_RDONLY, 0, &v);
+
+	if (result) {
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR: cannot open file %s\n", kprogram);
+		return result;
+	}
+
+
+	struct addrspace *old_as = curproc_getas();
+
+	if(old_as == NULL) {
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR: current process %s has NULL address space\n", curproc->p_name);
+		panic("sys_execv | ERROR: execv called on process with no address space\n");
+	}
+
+	/* Create a new address space. */
+	as = as_create();
+	if (as ==NULL) {
+		vfs_close(v);
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR: no memory to create address space for file %s\n", kprogram);
+		return ENOMEM;
+	}
+
+	/* Switch to it and activate it. */
+	curproc_setas(as);
+	as_activate();
+
+	/* Load the executable. */
+	result = load_elf(v, &entrypoint);
+	if (result) {
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR: could not load executable for file %s\n", kprogram);
+		/* p_addrspace will go away when curproc is destroyed */
+		vfs_close(v);
+		return result;
+	}
+
+	/* Done with the file now. */
+	vfs_close(v);
+
+	/* Delete the old address space now */
+	as_destroy(old_as);
+
+	/* Get the user stack pointer */
+	vaddr_t user_stack_ptr;
+	result = as_define_stack(as, &user_stack_ptr);
+
+	if(result){
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR: could not get user stack pointer \n");
+		return result;
+	}
+
+	/* Warp to user mode */
+	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/, user_stack_ptr, entrypoint);
+
+	panic("enter_new_process returned\n");
+	return EINVAL;
 }
 
 #endif /* OPT_A2 */
