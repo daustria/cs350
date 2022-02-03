@@ -431,10 +431,64 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 //////////////////////////////////////////////////////////////
 // sys_execv
 
-//TODO Get execv to work WITHOUT arguments for now. Ignore **args
 int sys_execv(const char *program, char **args)
 {
-	(void) args;
+
+	/* Count the number of arguments */
+
+	int argc = 0;
+	int result;
+
+	while(1)
+	{
+		/* Copy the pointer args + argc to the kernel and then check if its NULL */
+
+		char **karg_ptr;
+
+		/* Use copyin instead of copyinstr because we just want to check if the pointer is NULL */
+		result = copyin((const_userptr_t) (args + argc), (void *) karg_ptr, sizeof(char *));
+
+		if(result){
+			DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d could not copy the %d-th argument to the kernel\n", result, argc);
+			return result;
+		}
+
+		if(*karg_ptr == NULL) {
+			/* args is a NULL terminated array of holding elements of char *. we are done counting as soon as 
+			 * we encounter a NULL pointer */
+			break;
+		} 
+
+		++argc;
+
+	}
+
+	/* Now that we have the number of arguments, we can copy each argument from the userspace to the kernel */
+
+	//TODO: This is not what we are actually supposed to do: we need to copy these arguments to the (new) address space.
+	//Question: where in the new address space do these arguments belong?
+	char *kargs[argc];
+
+	for(int i = 0; i < argc; ++i)
+	{
+		/* Allocate 128 bytes for each string argument */
+		kargs[i] = kmalloc(128);
+
+		if(kargs[argc] == NULL) {
+			DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d could not malloc when copying the %d-th argument to the kernel\n", ENOMEM, i);
+			return ENOMEM;
+		}
+
+		/* Copy the string now */
+
+		result = copyinstr((const_userptr_t) args + i, kargs[i], 128, NULL);
+		if(result){
+			DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d could not copy the %d-th to the kernel as a string\n", result, i);
+			return result;
+		}
+
+		DEBUG(DB_SYSCALL, "sys_execv | copied the %d-th argument:%s\n", i, kargs[i]);
+	}
 
 	//copies a block of sizeof(int) from the kernel address &exitstatus to
 	//the user address status
@@ -447,10 +501,10 @@ int sys_execv(const char *program, char **args)
 	char kprogram[128]; // Allocate 128 bytes per string, a little wasteful but its fine for this course.
 
 	// Strings are going to be at most 128 bytes.
-	int result = copyinstr((const_userptr_t) program, (void *) kprogram, 128, NULL);
+	result = copyinstr((const_userptr_t) program, (void *) kprogram, 128, NULL);
 
 	if(result){
-		DEBUG(DB_SYSCALL, " sys_execv | ERROR: could not copy program name\n");
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR: could not copy program name\n");
 		return(result);
 	}
 
