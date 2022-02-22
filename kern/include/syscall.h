@@ -86,7 +86,10 @@ volatile pid_t pid_counter;
 struct spinlock pid_counter_mutex;
 
 int sys_fork(struct trapframe *tf, pid_t *retval);
-int sys_execv(const char *program, char **args);
+int sys_execv(userptr_t program, userptr_t args);
+
+/* Get the number of arguments from args and write it in argc, where args has type (char **). For use with execv */
+int sys_execv_count_args(userptr_t args, int *argc);
 #endif /* OPT_A2 */
 
 #ifdef UW

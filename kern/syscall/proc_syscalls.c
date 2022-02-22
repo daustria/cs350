@@ -431,57 +431,74 @@ int sys_fork(struct trapframe *tf, pid_t *retval)
 //////////////////////////////////////////////////////////////
 // sys_execv
 
-int sys_execv(const char *program, char **args)
+int sys_execv_count_args(userptr_t args, int *argc)
 {
-
-	/* Count the number of arguments */
-
-	int argc = 0;
+	int args_so_far = 0;
 	int result;
+
+	/* This cast is fine, according to piazza */
+	char **kargs = (char **) args;
 
 	while(1)
 	{
-		/* Copy the pointer args + argc to the kernel and then check if its NULL */
-
-		char **karg_ptr;
+		/* Copy the pointer args + args_so_far to the kernel and then check if its NULL */
+		char *karg;
 
 		/* Use copyin instead of copyinstr because we just want to check if the pointer is NULL */
-		result = copyin((const_userptr_t) (args + argc), (void *) karg_ptr, sizeof(char *));
+		result = copyin((const_userptr_t) (kargs + args_so_far), (void *) &karg, sizeof(char *));
 
 		if(result){
-			DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d could not copy the %d-th argument to the kernel\n", result, argc);
+			DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d could not copy the %d-th argument to the kernel\n", result, args_so_far);
 			return result;
 		}
 
-		if(*karg_ptr == NULL) {
+		if(karg == NULL) {
 			/* args is a NULL terminated array of holding elements of char *. we are done counting as soon as 
 			 * we encounter a NULL pointer */
-			break;
+
+			DEBUG(DB_SYSCALL, "sys_execv | read %d arguments\n", args_so_far);
+
+			*argc = args_so_far;
+			return 0;
 		} 
 
-		++argc;
+		++args_so_far;
 
+	}
+}
+
+int sys_execv(userptr_t program, userptr_t args)
+{
+	/* To count the number of arguments */
+	int argc = 0;
+	int result;
+
+	result = sys_execv_count_args(args, &argc);
+
+	if(result) {
+		return result;
 	}
 
 	/* Now that we have the number of arguments, we can copy each argument from the userspace to the kernel */
 
-	//TODO: This is not what we are actually supposed to do: we need to copy these arguments to the (new) address space.
-	//Question: where in the new address space do these arguments belong?
-	char *kargs[argc];
+	char *kargs[argc]; 
+
+	/* Temporarily cast to (char **) to access the underlying strings */
+	char **kargs_tmp = (char **) args;
 
 	for(int i = 0; i < argc; ++i)
 	{
 		/* Allocate 128 bytes for each string argument */
 		kargs[i] = kmalloc(128);
 
-		if(kargs[argc] == NULL) {
+		if(kargs[i] == NULL) {
 			DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d could not malloc when copying the %d-th argument to the kernel\n", ENOMEM, i);
 			return ENOMEM;
 		}
 
 		/* Copy the string now */
+		result = copyinstr((const_userptr_t) kargs_tmp[i], kargs[i], 128, NULL);
 
-		result = copyinstr((const_userptr_t) args + i, kargs[i], 128, NULL);
 		if(result){
 			DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d could not copy the %d-th to the kernel as a string\n", result, i);
 			return result;
@@ -490,18 +507,10 @@ int sys_execv(const char *program, char **args)
 		DEBUG(DB_SYSCALL, "sys_execv | copied the %d-th argument:%s\n", i, kargs[i]);
 	}
 
-	//copies a block of sizeof(int) from the kernel address &exitstatus to
-	//the user address status
-	//
-	//We should be careful about doing this... so there is a whole function for it.
-	//result = copyout((void *)&exitstatus,status,sizeof(int));
+	/* Copy the program path from the program in the user space to the kernel */
+	char kprogram[128]; 
 
-	//Copy the program path from program in the user space to the kernel
-
-	char kprogram[128]; // Allocate 128 bytes per string, a little wasteful but its fine for this course.
-
-	// Strings are going to be at most 128 bytes.
-	result = copyinstr((const_userptr_t) program, (void *) kprogram, 128, NULL);
+	result = copyinstr((const_userptr_t) program, kprogram, 128, NULL);
 
 	if(result){
 		DEBUG(DB_SYSCALL, "sys_execv | ERROR: could not copy program name\n");
@@ -509,6 +518,13 @@ int sys_execv(const char *program, char **args)
 	}
 
 	DEBUG(DB_SYSCALL, "sys_execv | copied program name:%s\n", kprogram);
+
+	/* Copied directly from runprogram: it does these steps:
+	 *
+	 * 1. opens program file using vfs_open
+	 * 2. creates a new address space, and set the process to the new address space.
+	 * 3. load the program with load_elf
+	 */
 
 	struct addrspace *as;
 	struct vnode *v;
@@ -560,6 +576,35 @@ int sys_execv(const char *program, char **args)
 	/* Get the user stack pointer */
 	vaddr_t user_stack_ptr;
 	result = as_define_stack(as, &user_stack_ptr);
+
+	/* Now I need to copy the arguments to the new address space 
+	 * I can write from 0x7FFF FFFF to 0x8000 0000, but NOT including 0x8000 0000
+	 * (too close to user address space?).
+	 */
+
+	for(int i = 0; i < argc; ++i)
+	{
+		const char *s = kargs[i];
+		int n = strlen(s);
+
+		/* Warning: remember that we need to push strlen(s) + 1 bytes on to the stack, because
+		 * strlen does not take into account the null character */
+
+		int arg_address = USERSTACK - (n + 1);
+
+		DEBUG(DB_SYSCALL, "sys_execv | writing argument %s to address %p\n", s, (int *) arg_address);
+
+		for(int j = 0; j < n+1; ++j)
+		{
+			char *address = (char *) arg_address + j;
+			*address = s[j];
+
+			DEBUG(DB_SYSCALL, "sys_execv | value at address %p: %c\n", (int *) address, *address);
+		}
+	}
+
+
+
 
 	if(result){
 		DEBUG(DB_SYSCALL, "sys_execv | ERROR: could not get user stack pointer \n");

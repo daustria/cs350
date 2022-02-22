@@ -139,7 +139,7 @@ syscall(struct trapframe *tf)
 	  err = sys_fork(tf, (pid_t *) &retval); //Just throw the entire trapframe. Since it needs to be copied to the child
 	  break;
 	case SYS_execv:
-	  err = sys_execv((const char *) tf->tf_a0, (char **) tf->tf_a1);
+	  err = sys_execv((userptr_t) tf->tf_a0, (userptr_t) tf->tf_a1);
 	  break;
 
 #endif /* OPT_A2 */
