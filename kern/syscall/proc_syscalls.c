@@ -507,16 +507,16 @@ int sys_execv(userptr_t program, userptr_t args)
 	}
 
 	/* Copy the program path from the program in the user space to the kernel */
-	char kprogram[128]; 
+	char kprogname[128]; 
 
-	result = copyinstr((const_userptr_t) program, kprogram, 128, NULL);
+	result = copyinstr((const_userptr_t) program, kprogname, 128, NULL);
 
 	if(result){
 		DEBUG(DB_SYSCALL, "sys_execv | ERROR: could not copy program name\n");
 		return(result);
 	}
 
-	DEBUG(DB_SYSCALL, "sys_execv | copied program name:%s\n", kprogram);
+	DEBUG(DB_SYSCALL, "sys_execv | copied program name:%s\n", kprogname);
 
 	/* Copied directly from runprogram: it does these steps:
 	 *
@@ -530,10 +530,10 @@ int sys_execv(userptr_t program, userptr_t args)
 	vaddr_t entrypoint;
 
 	/* Open the file. */
-	result = vfs_open(kprogram, O_RDONLY, 0, &v);
+	result = vfs_open(kprogname, O_RDONLY, 0, &v);
 
 	if (result) {
-		DEBUG(DB_SYSCALL, "sys_execv | ERROR: cannot open file %s\n", kprogram);
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR: cannot open file %s\n", kprogname);
 		return result;
 	}
 
@@ -549,7 +549,7 @@ int sys_execv(userptr_t program, userptr_t args)
 	as = as_create();
 	if (as ==NULL) {
 		vfs_close(v);
-		DEBUG(DB_SYSCALL, "sys_execv | ERROR: no memory to create address space for file %s\n", kprogram);
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR: no memory to create address space for file %s\n", kprogname);
 		return ENOMEM;
 	}
 
@@ -560,7 +560,7 @@ int sys_execv(userptr_t program, userptr_t args)
 	/* Load the executable. */
 	result = load_elf(v, &entrypoint);
 	if (result) {
-		DEBUG(DB_SYSCALL, "sys_execv | ERROR: could not load executable for file %s\n", kprogram);
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR: could not load executable for file %s\n", kprogname);
 		/* p_addrspace will go away when curproc is destroyed */
 		vfs_close(v);
 		return result;
@@ -572,94 +572,19 @@ int sys_execv(userptr_t program, userptr_t args)
 	/* Delete the old address space now */
 	as_destroy(old_as);
 
-	/* Get the user stack pointer */
-	KASSERT(as->as_stackpbase != 0);
+	/* Put arguments on the user stack and get the stack ptr simultaneously */
+	vaddr_t user_stack_ptr;
+	userptr_t argv;
 
-	/* We need to keep track of the addresses where we store the strings */
-	int arg_addresses[argc + 1]; /* Store argc + 1 because the program name is also an argument */
-
-	/* First copy the strings arguments (including the program name at round argc) */
-	for(int i = 0; i <= argc; ++i)
-	{
-		const char *s = (i == 0) ? kprogram : kargs[i-1];
-		int n = strlen(s);
-
-		/* Warning: remember that we need to push strlen(s) + 1 bytes on to the stack, because
-		 * strlen does not take into account the null character */
-
-		/* Write up to and including 0x7FFF FFFF, but not USERSTACK = 0x8000 0000 */
-		int starting_address;
-		if(i == 0){
-			starting_address = USERSTACK;
-		} else {
-			starting_address = arg_addresses[i-1];
-		}
-
-		int arg_address = starting_address - (n + 1);
-
-		DEBUG(DB_SYSCALL, "sys_execv | writing argument %s to address %p\n", s, (int *) arg_address);
-
-
-		//TODO: Use copyout to write stuff in the user address space. For now, let's write it unsafely like this and get it working.
-		for(int j = 0; j < n+1; ++j)
-		{
-			char *address = (char *) arg_address + j;
-			*address = s[j];
-
-			//DEBUG(DB_SYSCALL, "sys_execv | value at address %p: %c\n", (int *) address, *address);
-		}
-
-		arg_addresses[i] = arg_address;
-
-		//DEBUG(DB_SYSCALL, "sys_execv | arg_addresses[%d]:%p str:%s\n", i, (int *) arg_address, (char *) arg_address);
-	}
-
-	/* Next, copy the pointers to the strings */
-
-	int ptr_address = arg_addresses[argc];
-
-	for(int i = -1; i <= argc; ++i)
-	{
-		if(i == -1) {
-			/* Make sure the address of terminating null pointer is divisible by 8 */
-			ptr_address = ROUNDUP(ptr_address - 8, 8);
-		} else {
-			/* For addresses holding a (char *), they can be divisible by 4 */
-			ptr_address = ROUNDUP(ptr_address - 4, 4);
-		}
-
-		int *address = (int *) ptr_address;
-
-		if (i == -1) {
-			*address = 0; /* Write NULL first, so arguments are a null terminated array */
-		} else {
-			*address = arg_addresses[argc - i];
-		}
-
-
-		DEBUG(DB_SYSCALL, "sys_execv | address:%p *address:%p (char *)*address:%s\n", address, (int *) *address, (char *) *address);
-	}
-
-	DEBUG(DB_SYSCALL, "sys_execv | passing %p as argv\n", (int *) ptr_address);
-
-	/* Set the stack pointer to the top of the user stack, but make sure it is divisible by 8 */
-	vaddr_t	user_stack_ptr = (vaddr_t) (ptr_address % 8 == 0) ? ptr_address : ROUNDUP(ptr_address - 8, 8);
+	result = as_define_stack_args(as, &argv, &user_stack_ptr, kargs, argc, kprogname);
 
 	if(result){
-		DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d could not copy arguments to user address\n", result);
-		return result;
-	}
-
-	/* For debugging purposes */
-	char **argv = (char **) ptr_address;
-	for(int j = 0; j <= argc+1; ++j)
-	{
-		DEBUG(DB_SYSCALL, "sys_execv | &argv[%d]:%p argv[%d]:%p *argv[%d]:%s\n", j, argv + j, j, (int *) argv[j], j, (char *) argv[j]);
+		DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d when copying arguments onto stack\n", result);
 	}
 
 	/* Warp to user mode */
 	//enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/, user_stack_ptr, entrypoint);
-	enter_new_process(argc, (userptr_t) ptr_address, user_stack_ptr, entrypoint);
+	enter_new_process(argc, argv, user_stack_ptr, entrypoint);
 
 	panic("enter_new_process returned\n");
 	return EINVAL;

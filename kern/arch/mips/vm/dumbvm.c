@@ -37,7 +37,7 @@
 #include <mips/tlb.h>
 #include <addrspace.h>
 #include <vm.h>
-
+#include "opt-A2.h"
 /*
  * Dumb MIPS-only "VM system" that is intended to only be just barely
  * enough to struggle off the ground.
@@ -350,6 +350,102 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	*stackptr = USERSTACK;
 	return 0;
 }
+
+#ifdef OPT_A2
+int 		  
+as_define_stack_args(struct addrspace *as, userptr_t *argv, vaddr_t *initstackptr, char **args, int argc, char *kprogname)
+{
+	KASSERT(as->as_stackpbase != 0);
+
+	int result;
+	/* We need to keep track of the addresses where we store the strings */
+	int arg_addresses[argc + 1]; /* Store argc + 1 because the program name is also an argument */	
+
+	/* First copy the strings arguments (including the program name at round argc) */
+	for(int i = 0; i <= argc; ++i)
+	{
+		const char *s = (i == 0) ? kprogname : args[i-1];
+		int n = strlen(s);
+
+		/* Warning: remember that we need to push strlen(s) + 1 bytes on to the stack, because
+		 * strlen does not take into account the null character */
+
+		/* Write up to and including 0x7FFF FFFF, but not USERSTACK = 0x8000 0000 */
+		int starting_address;
+		if(i == 0){
+			starting_address = USERSTACK;
+		} else {
+			starting_address = arg_addresses[i-1];
+		}
+
+		int arg_address = starting_address - (n + 1);
+
+		DEBUG(DB_SYSCALL, "as_define_stack_args | writing argument %s to address %p\n", s, (int *) arg_address);
+
+
+		//TODO: Use copyout to write stuff in the user address space. For now, let's write it unsafely like this and get it working.
+		for(int j = 0; j < n+1; ++j)
+		{
+			char *address = (char *) arg_address + j;
+			*address = s[j];
+
+			//DEBUG(DB_SYSCALL, "as_define_stack_args | value at address %p: %c\n", (int *) address, *address);
+		}
+
+		arg_addresses[i] = arg_address;
+
+		//DEBUG(DB_SYSCALL, "as_define_stack_args | arg_addresses[%d]:%p str:%s\n", i, (int *) arg_address, (char *) arg_address);
+	}
+
+	/* Next, copy the pointers to the strings */
+
+	int ptr_address = arg_addresses[argc];
+
+	for(int i = -1; i <= argc; ++i)
+	{
+		if(i == -1) {
+			/* Make sure the address of terminating null pointer is divisible by 8 */
+			ptr_address = ROUNDUP(ptr_address - 8, 8);
+		} else {
+			/* For addresses holding a (char *), they can be divisible by 4 */
+			ptr_address = ROUNDUP(ptr_address - 4, 4);
+		}
+
+		int *address = (int *) ptr_address;
+
+		if (i == -1) {
+			*address = 0; /* Write NULL first, so arguments are a null terminated array */
+		} else {
+			*address = arg_addresses[argc - i];
+		}
+
+
+		DEBUG(DB_SYSCALL, "as_define_stack_args | address:%p *address:%p (char *)*address:%s\n", address, (int *) *address, (char *) *address);
+	}
+
+
+	/* Set the userspace args pointer */
+	*argv = (userptr_t) ptr_address;
+
+	/* Set the stack pointer to the top of the user stack, but make sure it is divisible by 8 */
+	vaddr_t	user_stack_ptr = (vaddr_t) (ptr_address % 8 == 0) ? ptr_address : ROUNDUP(ptr_address - 8, 8);
+	*initstackptr = user_stack_ptr;
+
+	if(result){
+		DEBUG(DB_SYSCALL, "as_define_stack_args | ERROR:%d could not copy arguments to user address\n", result);
+		return result;
+	}
+
+	/* For debugging purposes */
+	char **argv_debug = (char **) ptr_address;
+	for(int j = 0; j <= argc+1; ++j)
+	{
+		DEBUG(DB_SYSCALL, "as_define_stack_args | &argv[%d]:%p argv[%d]:%p *argv[%d]:%s\n", j, argv_debug + j, j, (int *) argv_debug[j], j, (char *) argv_debug[j]);
+	}
+
+	return 0;
+}
+#endif //OPT_A2
 
 int
 as_copy(struct addrspace *old, struct addrspace **ret)

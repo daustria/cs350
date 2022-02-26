@@ -36,6 +36,7 @@
 
 
 #include <vm.h>
+#include "opt-A2.h"
 
 struct vnode;
 
@@ -107,6 +108,16 @@ int               as_define_region(struct addrspace *as,
 int               as_prepare_load(struct addrspace *as);
 int               as_complete_load(struct addrspace *as);
 int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
+
+#ifdef OPT_A2
+/* Set the stack pointer as well as put arguments on the stack, for execv or runprogram*/
+int 		  as_define_stack_args(struct addrspace *as, 
+					userptr_t *argv, 
+					vaddr_t *initstackptr, 
+					char **args, 
+					int argc, 
+					char *kprogname);
+#endif //OPT_A2
 
 
 /*
