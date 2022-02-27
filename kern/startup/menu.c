@@ -93,16 +93,21 @@ cmd_progthread(void *ptr, unsigned long nargs)
 
 	KASSERT(nargs >= 1);
 
+	/* Removing warning now, implementing argument passing */
+	/*
 	if (nargs > 2) {
 		kprintf("Warning: argument passing from menu not supported\n");
 	}
+	*/
 
 	/* Hope we fit. */
 	KASSERT(strlen(args[0]) < sizeof(progname));
 
 	strcpy(progname, args[0]);
 
-	result = runprogram(progname);
+	/* don't count the progname as an arg (to be consistent with sys_execv) */
+	result = runprogram(progname, args+1, nargs-1);
+
 	if (result) {
 		kprintf("Running program %s failed: %s\n", args[0],
 			strerror(result));

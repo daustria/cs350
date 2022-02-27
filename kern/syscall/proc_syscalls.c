@@ -447,7 +447,7 @@ int sys_execv_count_args(userptr_t args, int *argc)
 		result = copyin((const_userptr_t) (kargs + args_so_far), (void *) &karg, sizeof(char *));
 
 		if(result){
-			DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d could not copy the %d-th argument to the kernel\n", result, args_so_far);
+			DEBUG(DB_SYSCALL, "sys_execv_count_args | ERROR:%d could not copy the %d-th argument to the kernel\n", result, args_so_far);
 			return result;
 		}
 
@@ -455,7 +455,7 @@ int sys_execv_count_args(userptr_t args, int *argc)
 			/* args is a NULL terminated array of holding elements of char *. we are done counting as soon as 
 			 * we encounter a NULL pointer */
 
-			DEBUG(DB_SYSCALL, "sys_execv | read %d arguments\n", args_so_far);
+			DEBUG(DB_SYSCALL, "sys_execv_count_args | read %d arguments\n", args_so_far);
 
 			*argc = args_so_far;
 			return 0;

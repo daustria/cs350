@@ -81,8 +81,8 @@ int malloctest(int, char **);
 int mallocstress(int, char **);
 int nettest(int, char **);
 
-/* Routine for running a user-level program. */
-int runprogram(char *progname);
+/* Routine for running a user-level program. argc is num args without counting progname */
+int runprogram(char *progname, char **args, int argc);
 
 /* Kernel menu system. */
 void menu(char *argstr);
