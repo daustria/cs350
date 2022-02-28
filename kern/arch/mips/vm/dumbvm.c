@@ -37,6 +37,7 @@
 #include <mips/tlb.h>
 #include <addrspace.h>
 #include <vm.h>
+#include <copyinout.h>
 #include "opt-A2.h"
 /*
  * Dumb MIPS-only "VM system" that is intended to only be just barely
@@ -353,18 +354,20 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 
 #ifdef OPT_A2
 int 		  
-as_define_stack_args(struct addrspace *as, userptr_t *argv, vaddr_t *initstackptr, char **args, int argc, char *kprogname)
+as_define_stack_args(struct addrspace *as, userptr_t *argv, vaddr_t *initstackptr, char **args, int argc)
 {
 	KASSERT(as->as_stackpbase != 0);
 
 	int result;
+
 	/* We need to keep track of the addresses where we store the strings */
-	int arg_addresses[argc + 1]; /* Store argc + 1 because the program name is also an argument */	
+	int arg_addresses[argc];
 
 	/* First copy the strings arguments (including the program name at round argc) */
-	for(int i = 0; i <= argc; ++i)
+	for(int i = 0; i < argc; ++i)
 	{
-		const char *s = (i == 0) ? kprogname : args[i-1];
+		const char *s = args[i];
+
 		int n = strlen(s);
 
 		/* Warning: remember that we need to push strlen(s) + 1 bytes on to the stack, because
@@ -372,6 +375,7 @@ as_define_stack_args(struct addrspace *as, userptr_t *argv, vaddr_t *initstackpt
 
 		/* Write up to and including 0x7FFF FFFF, but not USERSTACK = 0x8000 0000 */
 		int starting_address;
+
 		if(i == 0){
 			starting_address = USERSTACK;
 		} else {
@@ -382,14 +386,12 @@ as_define_stack_args(struct addrspace *as, userptr_t *argv, vaddr_t *initstackpt
 
 		DEBUG(DB_SYSCALL, "as_define_stack_args | writing argument %s to address %p\n", s, (int *) arg_address);
 
+		size_t actual_len = -1;
+		result = copyoutstr(s, (userptr_t) arg_address, n+1, &actual_len);
 
-		//TODO: Use copyout to write stuff in the user address space. For now, let's write it unsafely like this and get it working.
-		for(int j = 0; j < n+1; ++j)
-		{
-			char *address = (char *) arg_address + j;
-			*address = s[j];
-
-			//DEBUG(DB_SYSCALL, "as_define_stack_args | value at address %p: %c\n", (int *) address, *address);
+		if(result){
+			DEBUG(DB_SYSCALL, "as_define_stack_args | ERROR:%d could not write arguemnt %s to user address %p\n", result, s, (int *) arg_address);
+			return result;
 		}
 
 		arg_addresses[i] = arg_address;
@@ -399,13 +401,21 @@ as_define_stack_args(struct addrspace *as, userptr_t *argv, vaddr_t *initstackpt
 
 	/* Next, copy the pointers to the strings */
 
-	int ptr_address = arg_addresses[argc];
+	int ptr_address = arg_addresses[argc-1];
 
-	for(int i = -1; i <= argc; ++i)
+	/* For debugging: print the stack */
+	for(size_t j = arg_addresses[argc-1]; j < USERSTACK; ++j)
+	{
+		DEBUG(DB_SYSCALL, " as_define_stack_args | %p:%c\n", (int *) j, *((char *) j));
+	}
+
+	for(int i = -1; i < argc; ++i)
 	{
 		if(i == -1) {
-			/* Make sure the address of terminating null pointer is divisible by 8 */
-			ptr_address = ROUNDUP(ptr_address - 8, 8);
+			/* Make sure the address of terminating null pointer is divisible by 8 
+			 * (and leave some extra room to avoid overwriting a string) */
+			int offset = (ptr_address % 8 == 0) ? 8 : 16;
+			ptr_address = ROUNDUP(ptr_address - offset, 8);
 		} else {
 			/* For addresses holding a (char *), they can be divisible by 4 */
 			ptr_address = ROUNDUP(ptr_address - 4, 4);
@@ -413,12 +423,16 @@ as_define_stack_args(struct addrspace *as, userptr_t *argv, vaddr_t *initstackpt
 
 		int *address = (int *) ptr_address;
 
-		if (i == -1) {
-			*address = 0; /* Write NULL first, so arguments are a null terminated array */
-		} else {
-			*address = arg_addresses[argc - i];
-		}
+		/* We write NULL to the stack first, so arguments is an array of pointers that are NULL terminated */
+		int src = (i == -1) ? 0 : arg_addresses[argc-i-1];
 
+		DEBUG(DB_SYSCALL, "as_define_stack_args | writing %p to address %p\n", (int *) src, address);
+
+		result = copyout((const void *) &src, (userptr_t) address, sizeof(int));
+	
+		if(result){
+			DEBUG(DB_SYSCALL, "as_define_stack_args | ERROR:%d could not copy arg %d to user address %p\n", result, src, address);
+		}
 
 		DEBUG(DB_SYSCALL, "as_define_stack_args | address:%p *address:%p (char *)*address:%s\n", address, (int *) *address, (char *) *address);
 	}
@@ -438,7 +452,7 @@ as_define_stack_args(struct addrspace *as, userptr_t *argv, vaddr_t *initstackpt
 
 	/* For debugging purposes */
 	char **argv_debug = (char **) ptr_address;
-	for(int j = 0; j <= argc+1; ++j)
+	for(int j = 0; j < argc; ++j)
 	{
 		DEBUG(DB_SYSCALL, "as_define_stack_args | &argv[%d]:%p argv[%d]:%p *argv[%d]:%s\n", j, argv_debug + j, j, (int *) argv_debug[j], j, (char *) argv_debug[j]);
 	}

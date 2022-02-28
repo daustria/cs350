@@ -105,8 +105,7 @@ cmd_progthread(void *ptr, unsigned long nargs)
 
 	strcpy(progname, args[0]);
 
-	/* don't count the progname as an arg (to be consistent with sys_execv) */
-	result = runprogram(progname, args+1, nargs-1);
+	result = runprogram(progname, args, nargs);
 
 	if (result) {
 		kprintf("Running program %s failed: %s\n", args[0],

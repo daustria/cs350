@@ -576,7 +576,7 @@ int sys_execv(userptr_t program, userptr_t args)
 	vaddr_t user_stack_ptr;
 	userptr_t argv;
 
-	result = as_define_stack_args(as, &argv, &user_stack_ptr, kargs, argc, kprogname);
+	result = as_define_stack_args(as, &argv, &user_stack_ptr, kargs, argc);
 
 	if(result){
 		DEBUG(DB_SYSCALL, "sys_execv | ERROR:%d when copying arguments onto stack\n", result);

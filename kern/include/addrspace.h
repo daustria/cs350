@@ -115,8 +115,7 @@ int 		  as_define_stack_args(struct addrspace *as,
 					userptr_t *argv, 
 					vaddr_t *initstackptr, 
 					char **args, 
-					int argc, 
-					char *kprogname);
+					int argc);
 #endif //OPT_A2
 
 

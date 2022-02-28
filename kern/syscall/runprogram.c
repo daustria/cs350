@@ -92,7 +92,7 @@ runprogram(char *progname, char **args, int argc)
 
 	userptr_t argv;
 	/* Define the user stack in the address space, and put arguments on the stack */
-	result = as_define_stack_args(as, &argv, &stackptr, args, argc, progname);
+	result = as_define_stack_args(as, &argv, &stackptr, args, argc);
 
 	if (result) {
 		/* p_addrspace will go away when curproc is destroyed */
