@@ -395,7 +395,7 @@ as_define_stack_args(struct addrspace *as, userptr_t *argv, vaddr_t *initstackpt
 		}
 
 		arg_addresses[i] = arg_address;
-
+		//dummy comment for git commit test
 		//DEBUG(DB_SYSCALL, "as_define_stack_args | arg_addresses[%d]:%p str:%s\n", i, (int *) arg_address, (char *) arg_address);
 	}
 
