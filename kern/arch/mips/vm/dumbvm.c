@@ -39,6 +39,7 @@
 #include <vm.h>
 #include <copyinout.h>
 #include "opt-A2.h"
+#include "opt-A3.h"
 /*
  * Dumb MIPS-only "VM system" that is intended to only be just barely
  * enough to struggle off the ground.
@@ -188,9 +189,15 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	/* Disable interrupts on this CPU while frobbing the TLB. */
 	spl = splhigh();
 
+	//iterate through the TLB, we want to find the physical frame that
+	//matches our virtual page
+
 	for (i=0; i<NUM_TLB; i++) {
 		tlb_read(&ehi, &elo, i);
-		if (elo & TLBLO_VALID) {
+		if (elo & TLBLO_VALID) { 
+			//if the valid bit in elo is set, then this bitwise operation would return 0.
+			//if it is not set, the bitwise operation returns a non-zero value, and the conversion to boolean yields true.
+			//hence we execute this code block if the low bit in the tlb entry is not set, that is, if the tlb entry is not valid.
 			continue;
 		}
 		ehi = faultaddress;
@@ -200,6 +207,9 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 		splx(spl);
 		return 0;
 	}
+
+	//if the tlb is full (all entries are valid) we'll just randomly overwrite one of the entries.	
+	tlb_random(ehi, elo);	
 
 	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 	splx(spl);
