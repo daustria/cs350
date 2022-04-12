@@ -211,7 +211,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	//if the tlb is full (all entries are valid) we'll just randomly overwrite one of the entries.	
 	tlb_random(ehi, elo);	
 
-	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
+	//kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 	splx(spl);
 	return EFAULT;
 }
